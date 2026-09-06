@@ -82,7 +82,7 @@ One execution is one step run, so two steps selecting the same environment get s
 
 `${{ paseo.execution.id }}` is the only expression `newBranch` accepts. `paseo.prompt`, `paseo.context`, `paseo.inputs.*`, `values.*`, `steps.<id>.outputs.*`, and provider event fields are unavailable here, and each one fails bundle activation at the authored field, such as `.paseo/hub.yml.environments.review.worktree.newBranch`.
 
-`${{ paseo.execution.id }}` fails activation the same way anywhere else in a bundle. `branch` and `prNumber` take literal values.
+`${{ paseo.execution.id }}` is also available in step prompt text. It fails activation in other fields. `branch` and `prNumber` take literal values.
 
 An environment is a complete named object. A step selects its name; objects are not inherited, merged, or partially overridden.
 
@@ -255,3 +255,27 @@ Keep `environments` in `hub.yml`, convert the environment list to a named map, a
 Hub does not read TOML or a monolithic `triggers` section, and the CLI does not rewrite either format.
 
 See [Workflows](/docs/hub/workflows) for complete routing examples.
+
+## Agent continuation
+
+Self-contained dashboard trigger documents accept `run.continuation`:
+
+| Value                                                    | Behavior                                                                                                       |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `{mode: conversation}`                                   | Reuse the project's agent for the event's conversation; create a new agent when the event has no conversation. |
+| `{mode: key, key: "support-${{ paseo.inputs.ticket }}"}` | Reuse the project's agent for the evaluated custom key.                                                        |
+| `{mode: new}`                                            | Default. Create a new agent for each arrival.                                                                  |
+
+Keys use the existing expression syntax and must resolve to a non-empty string of at most 512 characters. Custom keys and provider conversation identities occupy separate namespaces. The same key in different projects does not share an agent.
+
+An existing session keeps its daemon, agent configuration, target, environment, and tool contracts. When an agent selector reads an input, omitting that input on a later arrival keeps the session's original agent. Explicitly selecting a different agent, or changing the target, environment, or tool contracts for the same key, fails with an explanation; choose a different key or **New agent**. Prompts and output destinations belong to each arrival and may change. A worktree branch is chosen when the session is first created and reused on later arrivals.
+
+Triggers that mint temporary environment credentials, including a `run.github` grant or a connection token in `run.env`, must choose **New agent** when the event has a conversation or uses a custom key. These credentials expire with the execution, and an existing agent's environment cannot be refreshed. Hub-managed reply tools remain available with continuation.
+
+### Upgrading
+
+Upgrade the connected Paseo daemons before enabling the new Hub version. Hub requires the daemon's ordinary agent RPC and request receipt capabilities; an older host produces an actionable dispatch error.
+
+Hub's database migration adds sessions and nullable execution associations. Existing executions retain their saved launch contract and execution-specific MCP endpoint until they finish. Self-contained trigger documents that omit `run.continuation` create a new agent for each arrival. Historical agents are not backfilled into sessions.
+
+Legacy multi-step workflow bundles keep their existing behavior. Converting one to a self-contained trigger writes `mode: new` explicitly; change it in the editor when ready to reuse agents.
