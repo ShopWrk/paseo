@@ -159,6 +159,7 @@ const PROVIDER_CONTRACTS: Record<string, ProviderContract> = {
   claude: { optionsSchema: ClaudeProviderOptionsSchema, supportsExactMcpPreapproval: true },
   codex: { optionsSchema: CodexProviderOptionsSchema, supportsExactMcpPreapproval: true },
   opencode: { optionsSchema: OpenCodeProviderOptionsSchema, supportsExactMcpPreapproval: true },
+  pi: { optionsSchema: EmptyProviderOptionsSchema, supportsExactMcpPreapproval: true },
 };
 
 const UNSUPPORTED_PROVIDER_CONTRACT: ProviderContract = {

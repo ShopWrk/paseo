@@ -114,15 +114,29 @@ describe("exact MCP preapproval mappings", () => {
   test("unsupported providers fail closed with an unattended-execution error", () => {
     const registry = buildProviderRegistry(createTestLogger());
     expect(() =>
-      registry.pi.applyToolPolicy(
+      registry.copilot.applyToolPolicy(
         {
-          provider: "pi",
+          provider: "copilot",
           cwd: "/tmp",
           mcpServers: { hub: { type: "http", url: "http://127.0.0.1/hub" } },
         },
         hubPolicy,
       ),
     ).toThrow("cannot preapprove exact MCP tools for unattended execution");
+  });
+
+  test("Pi accepts exact MCP preapproval for its approval broker", () => {
+    const registry = buildProviderRegistry(createTestLogger());
+    const config = {
+      provider: "pi",
+      cwd: "/tmp",
+      mcpServers: { hub: { type: "http" as const, url: "http://127.0.0.1/hub" } },
+    };
+
+    expect(registry.pi.applyToolPolicy(config, hubPolicy)).toEqual({
+      ...config,
+      toolPolicy: hubPolicy,
+    });
   });
 
   test("Codex enables and approves only the granted server tool", () => {

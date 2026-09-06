@@ -98,16 +98,19 @@ type PaseoExtensionListener = (event: unknown, context?: unknown) => unknown;
 
 async function loadPaseoExtensionListeners(
   extensionPath: string,
+  sharedEventListeners = new Map<string, PaseoExtensionListener>(),
 ): Promise<Map<string, PaseoExtensionListener>> {
   const listeners = new Map<string, PaseoExtensionListener>();
   const extension = (await import(pathToFileURL(extensionPath).href)) as {
     default: (piApi: {
       on: (event: string, listener: PaseoExtensionListener) => void;
+      events: { on: (event: string, listener: PaseoExtensionListener) => void };
       registerCommand: () => void;
     }) => void;
   };
   extension.default({
     on: (event, listener) => listeners.set(event, listener),
+    events: { on: (event, listener) => sharedEventListeners.set(event, listener) },
     registerCommand: () => undefined,
   });
   return listeners;
@@ -2521,6 +2524,87 @@ describe("PiRpcAgentClient", () => {
     ]);
     expect(actualLaunch.mcpConfigPath).toBeUndefined();
     expect(session.capabilities.supportsMcpServers).toBe(false);
+  });
+
+  test("preapproves only exact Hub MCP grants through the Pi approval broker", async () => {
+    const pi = new FakePi();
+    pi.queueCommands([
+      {
+        name: "mcp",
+        source: "extension",
+        sourceInfo: { source: "npm:pi-mcp-adapter" },
+      },
+    ]);
+    const client = createClient(pi);
+    const session = await client.createSession(
+      createConfig({
+        mcpServers: {
+          hub: { type: "http", url: "http://127.0.0.1/hub" },
+          docs: { type: "http", url: "http://127.0.0.1/docs" },
+        },
+        toolPolicy: {
+          preapproved: [
+            { kind: "mcp", server: "hub", tool: "reply" },
+            { kind: "mcp", server: "hub", tool: "finish_execution" },
+          ],
+        },
+      }),
+    );
+
+    const launch = pi.recordedLaunches[1]!;
+    const injectedConfig = JSON.parse(readUtf8File(launch.mcpConfigPath!)) as {
+      mcpServers: Record<string, Record<string, unknown>>;
+    };
+    expect(injectedConfig.mcpServers.hub).toMatchObject({ approveTools: true });
+    expect(injectedConfig.mcpServers.docs).not.toHaveProperty("approveTools");
+
+    const sharedEventListeners = new Map<string, PaseoExtensionListener>();
+    await loadPaseoExtensionListeners(launch.extensionPaths[0]!, sharedEventListeners);
+    const approvalListener = sharedEventListeners.get("pi-mcp-adapter:tool-approval-request");
+    expect(approvalListener).toBeTypeOf("function");
+
+    let approvedHandler: (() => Promise<string>) | undefined;
+    approvalListener?.({
+      serverName: "hub",
+      originalToolName: "reply",
+      claim: (handler: () => Promise<string>) => {
+        approvedHandler = handler;
+        return true;
+      },
+    });
+    expect(await approvedHandler?.()).toBe("allow_once");
+
+    let unapprovedClaimed = false;
+    approvalListener?.({
+      serverName: "hub",
+      originalToolName: "publish",
+      claim: () => {
+        unapprovedClaimed = true;
+        return true;
+      },
+    });
+    expect(unapprovedClaimed).toBe(false);
+
+    await session.close();
+  });
+
+  test("rejects Pi tool policy when the MCP approval broker is unavailable", async () => {
+    const pi = new FakePi();
+    pi.queueCommands([]);
+    const client = createClient(pi);
+
+    await expect(
+      client.createSession(
+        createConfig({
+          mcpServers: { hub: { type: "http", url: "http://127.0.0.1/hub" } },
+          toolPolicy: {
+            preapproved: [{ kind: "mcp", server: "hub", tool: "reply" }],
+          },
+        }),
+      ),
+    ).rejects.toThrow(
+      "Pi exact MCP preapproval requires pi-mcp-adapter with its approval broker enabled",
+    );
   });
 });
 
