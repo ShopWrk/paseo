@@ -260,15 +260,15 @@ See [Workflows](/docs/hub/workflows) for complete routing examples.
 
 Self-contained dashboard trigger documents accept `run.continuation`:
 
-| Value                                                    | Behavior                                                                                                                |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `{mode: conversation}`                                   | Default. Reuse the project's agent for the event's conversation; create a new agent when the event has no conversation. |
-| `{mode: key, key: "support-${{ paseo.inputs.ticket }}"}` | Reuse the project's agent for the evaluated custom key.                                                                 |
-| `{mode: new}`                                            | Create a new agent for each arrival.                                                                                    |
+| Value                                                    | Behavior                                                                                                       |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `{mode: conversation}`                                   | Reuse the project's agent for the event's conversation; create a new agent when the event has no conversation. |
+| `{mode: key, key: "support-${{ paseo.inputs.ticket }}"}` | Reuse the project's agent for the evaluated custom key.                                                        |
+| `{mode: new}`                                            | Default. Create a new agent for each arrival.                                                                  |
 
 Keys use the existing expression syntax and must resolve to a non-empty string of at most 512 characters. Custom keys and provider conversation identities occupy separate namespaces. The same key in different projects does not share an agent.
 
-An existing session keeps its daemon, agent configuration, target, environment, and tool contracts. Changing those settings for the same key fails with an explanation; choose a different key or **New agent**. Prompts and output destinations belong to each arrival and may change. A worktree branch is chosen when the session is first created and reused on later arrivals.
+An existing session keeps its daemon, agent configuration, target, environment, and tool contracts. When an agent selector reads an input, omitting that input on a later arrival keeps the session's original agent. Explicitly selecting a different agent, or changing the target, environment, or tool contracts for the same key, fails with an explanation; choose a different key or **New agent**. Prompts and output destinations belong to each arrival and may change. A worktree branch is chosen when the session is first created and reused on later arrivals.
 
 Triggers that mint temporary environment credentials, including a `run.github` grant or a connection token in `run.env`, must choose **New agent** when the event has a conversation or uses a custom key. These credentials expire with the execution, and an existing agent's environment cannot be refreshed. Hub-managed reply tools remain available with continuation.
 
@@ -276,6 +276,6 @@ Triggers that mint temporary environment credentials, including a `run.github` g
 
 Upgrade the connected Paseo daemons before enabling the new Hub version. Hub requires the daemon's ordinary agent RPC and request receipt capabilities; an older host produces an actionable dispatch error.
 
-Hub's database migration adds sessions and nullable execution associations. Existing executions retain their saved launch contract and execution-specific MCP endpoint until they finish. New arrivals for existing self-contained trigger documents use the conversation default. Historical agents are not backfilled into sessions.
+Hub's database migration adds sessions and nullable execution associations. Existing executions retain their saved launch contract and execution-specific MCP endpoint until they finish. Self-contained trigger documents that omit `run.continuation` create a new agent for each arrival. Historical agents are not backfilled into sessions.
 
 Legacy multi-step workflow bundles keep their existing behavior. Converting one to a self-contained trigger writes `mode: new` explicitly; change it in the editor when ready to reuse agents.
