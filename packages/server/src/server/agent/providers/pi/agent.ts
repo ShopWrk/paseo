@@ -5,6 +5,7 @@ import { join, resolve as resolvePath } from "node:path";
 import type { Logger } from "pino";
 import stripAnsi from "strip-ansi";
 import { z } from "zod";
+import type { ToolPolicy } from "@getpaseo/protocol/agent-types";
 
 import {
   type AgentCapabilityFlags,
@@ -51,6 +52,7 @@ import {
 } from "../../provider-launch-config.js";
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { composeSystemPromptParts } from "../../system-prompt.js";
+import { ToolPolicyUnsupportedError } from "../../provider-options.js";
 import {
   buildBinaryDiagnosticRows,
   buildCommandResolutionDiagnosticRows,
@@ -96,6 +98,7 @@ const PASEO_PI_CAPTURE_EXTENSION_COMMAND = "paseo_capture_entries";
 const PASEO_PI_ENTRY_CAPTURE_MARKER = "PASEO_ENTRY_CAPTURE";
 const PASEO_PI_SUBMITTED_USER_ENTRY_MARKER = "PASEO_SUBMITTED_USER_ENTRY";
 const PASEO_PI_COMMAND_RESULT_MARKER = "PASEO_COMMAND_RESULT";
+const PI_MCP_TOOL_APPROVAL_REQUEST_EVENT = "pi-mcp-adapter:tool-approval-request";
 const DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS = 30_000;
 const DEFAULT_PI_RPC_TIMEOUT_MS = 60_000;
 const QUESTION_RESPONSE_HEADER = "Response";
@@ -263,6 +266,7 @@ interface PiMcpServerConfig {
   headers?: Record<string, string>;
   auth?: false;
   oauth?: false;
+  approveTools?: true;
 }
 
 interface PiMcpConfigFile {
@@ -528,12 +532,13 @@ function buildResumeStartInput(input: {
   };
 }
 
-function toPiMcpConfig(config: McpServerConfig): PiMcpServerConfig {
+function toPiMcpConfig(config: McpServerConfig, requireApproval: boolean): PiMcpServerConfig {
   if (config.type === "stdio") {
     return {
       command: config.command,
       ...(config.args ? { args: config.args } : {}),
       ...(config.env ? { env: config.env } : {}),
+      ...(requireApproval ? { approveTools: true } : {}),
     };
   }
 
@@ -542,6 +547,7 @@ function toPiMcpConfig(config: McpServerConfig): PiMcpServerConfig {
     ...(config.headers ? { headers: config.headers } : {}),
     auth: false,
     oauth: false,
+    ...(requireApproval ? { approveTools: true } : {}),
   };
 }
 
@@ -584,6 +590,7 @@ function createPiMcpConfigFile(
   servers: Record<string, McpServerConfig>,
   options?: {
     piGlobalConfigEnv?: Record<string, string>;
+    toolPolicy?: ToolPolicy;
   },
 ): PiMcpConfigFile {
   const globalConfig = options?.piGlobalConfigEnv
@@ -596,8 +603,11 @@ function createPiMcpConfigFile(
     configuredServers = globalConfig["mcp-servers"];
   }
   const mcpServers: Record<string, unknown> = { ...configuredServers };
+  const policyServers = new Set(
+    options?.toolPolicy?.preapproved.map((grant) => grant.server) ?? [],
+  );
   for (const [name, serverConfig] of Object.entries(servers)) {
-    mcpServers[name] = toPiMcpConfig(serverConfig);
+    mcpServers[name] = toPiMcpConfig(serverConfig, policyServers.has(name));
   }
 
   const dir = mkdtempSync(join(tmpdir(), "paseo-pi-mcp-"));
@@ -614,7 +624,7 @@ function createPiMcpConfigFile(
   };
 }
 
-function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
+function createPiPaseoExtensionFile(systemPrompt?: string, toolPolicy?: ToolPolicy): PiTempFile {
   const dir = mkdtempSync(join(tmpdir(), "paseo-pi-extension-"));
   const filePath = join(dir, "paseo-integration.mjs");
   writeFileSync(
@@ -669,6 +679,19 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 
 	export default function paseoIntegration(pi) {
 	  const submittedUserMessages = [];
+	  const preapprovedMcpTools = new Set(
+	    ${JSON.stringify(
+        toolPolicy?.preapproved.map((grant) => JSON.stringify([grant.server, grant.tool])) ?? [],
+      )},
+	  );
+
+	  pi.events.on("${PI_MCP_TOOL_APPROVAL_REQUEST_EVENT}", (request) => {
+	    const key = JSON.stringify([request?.serverName, request?.originalToolName]);
+	    if (!preapprovedMcpTools.has(key)) {
+	      return;
+	    }
+	    request.claim(async () => "allow_once");
+	  });
 
 	  function emitSubmittedUserEntries(ctx) {
 	    const entries = ctx.sessionManager.getEntries();
@@ -2539,9 +2562,16 @@ export class PiRpcAgentClient implements AgentClient {
       ...this.runtimeSettings?.env,
       ...launchContext?.env,
     };
-    const mcpConfig = await this.prepareMcpConfig(config.cwd, config.mcpServers, mcpEnv);
+    const mcpConfig = await this.prepareMcpConfig(
+      config.cwd,
+      config.mcpServers,
+      mcpEnv,
+      config.toolPolicy,
+    );
+    this.requireToolPolicyAdapter(config.toolPolicy, mcpConfig);
     const paseoExtension = createPiPaseoExtensionFile(
       composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
+      config.toolPolicy,
     );
     let runtimeSession: PiRuntimeSession;
     try {
@@ -2600,12 +2630,15 @@ export class PiRpcAgentClient implements AgentClient {
       resumeConfig.cwd,
       resumeConfig.config.mcpServers,
       mcpEnv,
+      resumeConfig.config.toolPolicy,
     );
+    this.requireToolPolicyAdapter(resumeConfig.config.toolPolicy, mcpConfig);
     const paseoExtension = createPiPaseoExtensionFile(
       composeSystemPromptParts(
         resumeConfig.config.systemPrompt,
         resumeConfig.config.daemonAppendSystemPrompt,
       ),
+      resumeConfig.config.toolPolicy,
     );
     let runtimeSession: PiRuntimeSession;
     try {
@@ -2744,6 +2777,7 @@ export class PiRpcAgentClient implements AgentClient {
     cwd: string,
     servers: Record<string, McpServerConfig> | undefined,
     env: Record<string, string> | undefined,
+    toolPolicy?: ToolPolicy,
   ): Promise<PiMcpConfigFile | null> {
     if (!servers || Object.keys(servers).length === 0) {
       return null;
@@ -2751,7 +2785,20 @@ export class PiRpcAgentClient implements AgentClient {
     if (!(await this.detectMcpAdapter(cwd, env))) {
       return null;
     }
-    return createPiMcpConfigFile(servers, { piGlobalConfigEnv: env });
+    return createPiMcpConfigFile(servers, { piGlobalConfigEnv: env, toolPolicy });
+  }
+
+  private requireToolPolicyAdapter(
+    toolPolicy: ToolPolicy | undefined,
+    mcpConfig: PiMcpConfigFile | null,
+  ): void {
+    if (!toolPolicy || toolPolicy.preapproved.length === 0 || mcpConfig) {
+      return;
+    }
+    throw new ToolPolicyUnsupportedError(
+      this.provider,
+      "Pi exact MCP preapproval requires pi-mcp-adapter with its approval broker enabled",
+    );
   }
 
   private async detectMcpAdapter(cwd: string, env?: Record<string, string>): Promise<boolean> {
