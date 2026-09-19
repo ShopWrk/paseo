@@ -163,6 +163,7 @@ export interface AgentCapabilityFlags {
   supportsRewindConversation?: boolean;
   supportsRewindFiles?: boolean;
   supportsRewindBoth?: boolean;
+  supportsImagePrompts?: boolean;
 }
 
 export interface AgentPersistenceHandle {

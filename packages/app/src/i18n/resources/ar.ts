@@ -178,6 +178,7 @@ export const ar: TranslationResources = {
       uploadFailed: "Failed to upload file",
       noClipboardImage: "لا توجد صورة في الحافظة الحالية. جرّب اللصق من لوحة المفاتيح.",
       pasteImageFailed: "تعذر لصق الصورة",
+      imagesUnsupported: "هذا الوكيل لا يدعم إدخال الصور",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {

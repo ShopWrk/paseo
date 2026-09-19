@@ -178,6 +178,7 @@ export const zhCN: TranslationResources = {
       uploadFailed: "Failed to upload file",
       noClipboardImage: "当前剪贴板中没有图片。请尝试通过键盘粘贴。",
       pasteImageFailed: "无法粘贴图片",
+      imagesUnsupported: "此代理不支持图片输入",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {

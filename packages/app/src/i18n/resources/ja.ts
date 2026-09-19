@@ -180,6 +180,7 @@ export const ja: TranslationResources = {
       noClipboardImage:
         "現在のクリップボードに画像がありません。キーボードから貼り付けてみてください。",
       pasteImageFailed: "画像を貼り付けられませんでした",
+      imagesUnsupported: "このエージェントは画像入力をサポートしていません",
       fileTooLarge: "{{fileName}}が大きすぎます（最大{{size}}）",
     },
     clientCommands: {

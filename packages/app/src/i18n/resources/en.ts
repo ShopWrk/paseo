@@ -174,6 +174,7 @@ export const en = {
       uploadFailed: "Failed to upload file",
       noClipboardImage: "No image in the current clipboard. Try pasting from your keyboard.",
       pasteImageFailed: "Failed to paste image",
+      imagesUnsupported: "This agent does not support image inputs",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {

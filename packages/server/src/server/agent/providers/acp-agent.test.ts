@@ -146,6 +146,7 @@ function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
         supportsMcpServers: true,
         supportsReasoningStream: true,
         supportsToolInvocations: true,
+        supportsImagePrompts: true,
       },
       ...(terminateProcess ? { terminateProcess } : {}),
     },
@@ -4031,5 +4032,187 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
       cwd: "/tmp/paseo-acp-test",
       mcpServers: [],
     });
+  });
+});
+
+describe("ACPAgentSession usage updates and prompt capabilities", () => {
+  test("emits usage_updated with context window fields from usage_update notifications", () => {
+    const session = createSession();
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.activeForegroundTurnId = "turn-1";
+
+    const events = internals.translateSessionUpdate({
+      sessionUpdate: "usage_update",
+      used: 12_000,
+      size: 200_000,
+      cost: { amount: 0.42, currency: "USD" },
+    } as SessionUpdate);
+
+    expect(events).toEqual([
+      {
+        type: "usage_updated",
+        provider: "claude-acp",
+        usage: {
+          contextWindowMaxTokens: 200_000,
+          contextWindowUsedTokens: 12_000,
+          totalCostUsd: 0.42,
+        },
+        turnId: "turn-1",
+      },
+    ]);
+  });
+
+  test("drops non-USD usage_update costs instead of mislabeling them", () => {
+    const session = createSession();
+    const events = asInternals<ACPSessionInternals>(session).translateSessionUpdate({
+      sessionUpdate: "usage_update",
+      used: 1_000,
+      size: 100_000,
+      cost: { amount: 3, currency: "EUR" },
+    } as SessionUpdate);
+
+    expect(events).toEqual([
+      {
+        type: "usage_updated",
+        provider: "claude-acp",
+        usage: {
+          contextWindowMaxTokens: 100_000,
+          contextWindowUsedTokens: 1_000,
+        },
+        turnId: undefined,
+      },
+    ]);
+  });
+
+  test("merges prompt response usage over context fields captured mid-turn", async () => {
+    const session = createSession();
+    const internals = asInternals<ACPSessionInternals>(session);
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    let resolvePrompt!: (response: PromptResponse) => void;
+    internals.sessionId = "session-1";
+    internals.connection = {
+      prompt: vi.fn(
+        () =>
+          new Promise<PromptResponse>((resolve) => {
+            resolvePrompt = resolve;
+          }),
+      ),
+    };
+
+    const { turnId } = await session.startTurn("hello");
+    internals.translateSessionUpdate({
+      sessionUpdate: "usage_update",
+      used: 5_000,
+      size: 200_000,
+    } as SessionUpdate);
+
+    resolvePrompt({
+      stopReason: "end_turn",
+      usage: { inputTokens: 10, outputTokens: 20 },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const completed = events.find((event) => event.type === "turn_completed");
+    expect(completed).toMatchObject({
+      type: "turn_completed",
+      turnId,
+      usage: {
+        inputTokens: 10,
+        outputTokens: 20,
+        contextWindowMaxTokens: 200_000,
+        contextWindowUsedTokens: 5_000,
+      },
+    });
+  });
+
+  test("omits image blocks and warns when the agent does not advertise image prompts", async () => {
+    const session = createSessionWithConfig();
+    const events: AgentStreamEvent[] = [];
+    const prompt = vi.fn().mockResolvedValue({ stopReason: "end_turn" });
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.connection = { prompt };
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn([
+      { type: "text", text: "look at this" },
+      { type: "image", data: "AA==", mimeType: "image/png" },
+    ]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(prompt).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      messageId: expect.any(String),
+      prompt: [{ type: "text", text: "look at this" }],
+    });
+    const warning = events.find(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "notification" &&
+        event.item.level === "warning",
+    );
+    expect(warning).toMatchObject({
+      turnId: expect.any(String),
+      item: { message: expect.stringContaining("does not support image inputs") },
+    });
+  });
+});
+
+describe("ACPAgentSession prompt capability discovery", () => {
+  function makeCapableSession(agentCapabilities: unknown): ACPAgentSession {
+    class TestSession extends ACPAgentSession {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: createProbeChildStub(),
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "session-1",
+              modes: null,
+              models: null,
+              configOptions: [],
+            }),
+          } as unknown as ClientSideConnection,
+          initialize: { agentCapabilities },
+        } as SpawnedACPProcess;
+      }
+    }
+
+    return new TestSession(
+      { provider: "cursor", cwd: "/tmp/paseo-acp-test" },
+      {
+        provider: "cursor",
+        logger: createTestLogger(),
+        defaultCommand: ["cursor-agent", "acp"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+      },
+    );
+  }
+
+  test("marks supportsImagePrompts when the agent advertises image prompts", async () => {
+    const session = makeCapableSession({ promptCapabilities: { image: true } });
+
+    await session.initializeNewSession();
+
+    expect(session.capabilities.supportsImagePrompts).toBe(true);
+  });
+
+  test("leaves supportsImagePrompts false when prompt capabilities are absent", async () => {
+    const session = makeCapableSession({});
+
+    await session.initializeNewSession();
+
+    expect(session.capabilities.supportsImagePrompts).toBe(false);
   });
 });
