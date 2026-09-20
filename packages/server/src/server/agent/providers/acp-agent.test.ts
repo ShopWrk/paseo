@@ -4128,6 +4128,48 @@ describe("ACPAgentSession usage updates and prompt capabilities", () => {
     });
   });
 
+  test("resets turn usage between turns so a later turn cannot leak stale context fields", async () => {
+    const session = createSessionWithConfig();
+    const internals = asInternals<ACPSessionInternals>(session);
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const prompts: Array<(response: PromptResponse) => void> = [];
+    internals.sessionId = "session-1";
+    internals.connection = {
+      prompt: vi.fn(
+        () =>
+          new Promise<PromptResponse>((resolve) => {
+            prompts.push(resolve);
+          }),
+      ),
+    };
+
+    await session.startTurn("first");
+    internals.translateSessionUpdate({
+      sessionUpdate: "usage_update",
+      used: 5_000,
+      size: 200_000,
+    } as SessionUpdate);
+    prompts[0]({ stopReason: "end_turn" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await session.startTurn("second");
+    prompts[1]({ stopReason: "end_turn" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const completions = events.filter((event) => event.type === "turn_completed");
+    expect(completions).toHaveLength(2);
+    expect(completions[0]).toMatchObject({
+      type: "turn_completed",
+      usage: { contextWindowMaxTokens: 200_000, contextWindowUsedTokens: 5_000 },
+    });
+    expect(completions[1]).toMatchObject({ type: "turn_completed" });
+    expect(completions[1].usage).toBeUndefined();
+  });
+
   test("omits image blocks and warns when the agent does not advertise image prompts", async () => {
     const session = createSessionWithConfig();
     const events: AgentStreamEvent[] = [];
