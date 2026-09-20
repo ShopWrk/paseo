@@ -576,7 +576,8 @@ function wrapClientProvider(
           };
         }
       : undefined,
-    isAvailable: (signal) => inner.isAvailable(signal),
+    getCatalogCacheKey: inner.getCatalogCacheKey?.bind(inner),
+    isAvailable: (signal, options) => inner.isAvailable(signal, options),
     getDiagnostic: inner.getDiagnostic?.bind(inner),
   };
 }
