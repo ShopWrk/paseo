@@ -179,6 +179,7 @@ export const ptBR: TranslationResources = {
       uploadFailed: "Falha ao enviar arquivo",
       noClipboardImage: "Não há imagem na área de transferência atual. Tente colar pelo teclado.",
       pasteImageFailed: "Falha ao colar a imagem",
+      imagesUnsupported: "Este agente não aceita imagens",
       fileTooLarge: "{{fileName}} é grande demais (máximo {{size}})",
     },
     clientCommands: {

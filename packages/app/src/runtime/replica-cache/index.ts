@@ -181,6 +181,7 @@ const AgentCapabilitiesSchema = z.strictObject({
   supportsRewindConversation: z.boolean().optional(),
   supportsRewindFiles: z.boolean().optional(),
   supportsRewindBoth: z.boolean().optional(),
+  supportsImagePrompts: z.boolean().optional(),
 });
 
 const StoredProjectCheckoutSchema = z.union([
@@ -589,6 +590,34 @@ function serializeAgentTurn(agent: Agent): NonNullable<StoredAgent["turn"]> {
   };
 }
 
+function serializeAgentCapabilities(
+  capabilities: Agent["capabilities"],
+): StoredAgent["snapshot"]["capabilities"] {
+  return {
+    supportsStreaming: capabilities.supportsStreaming,
+    supportsSessionPersistence: capabilities.supportsSessionPersistence,
+    ...(capabilities.supportsSessionListing !== undefined
+      ? { supportsSessionListing: capabilities.supportsSessionListing }
+      : {}),
+    supportsDynamicModes: capabilities.supportsDynamicModes,
+    supportsMcpServers: capabilities.supportsMcpServers,
+    supportsReasoningStream: capabilities.supportsReasoningStream,
+    supportsToolInvocations: capabilities.supportsToolInvocations,
+    ...(capabilities.supportsRewindConversation !== undefined
+      ? { supportsRewindConversation: capabilities.supportsRewindConversation }
+      : {}),
+    ...(capabilities.supportsRewindFiles !== undefined
+      ? { supportsRewindFiles: capabilities.supportsRewindFiles }
+      : {}),
+    ...(capabilities.supportsRewindBoth !== undefined
+      ? { supportsRewindBoth: capabilities.supportsRewindBoth }
+      : {}),
+    ...(capabilities.supportsImagePrompts !== undefined
+      ? { supportsImagePrompts: capabilities.supportsImagePrompts }
+      : {}),
+  };
+}
+
 function serializeAgent(agent: Agent): StoredAgent {
   const snapshot = {
     id: agent.id,
@@ -609,26 +638,7 @@ function serializeAgent(agent: Agent): StoredAgent {
           },
         }
       : {}),
-    capabilities: {
-      supportsStreaming: agent.capabilities.supportsStreaming,
-      supportsSessionPersistence: agent.capabilities.supportsSessionPersistence,
-      ...(agent.capabilities.supportsSessionListing !== undefined
-        ? { supportsSessionListing: agent.capabilities.supportsSessionListing }
-        : {}),
-      supportsDynamicModes: agent.capabilities.supportsDynamicModes,
-      supportsMcpServers: agent.capabilities.supportsMcpServers,
-      supportsReasoningStream: agent.capabilities.supportsReasoningStream,
-      supportsToolInvocations: agent.capabilities.supportsToolInvocations,
-      ...(agent.capabilities.supportsRewindConversation !== undefined
-        ? { supportsRewindConversation: agent.capabilities.supportsRewindConversation }
-        : {}),
-      ...(agent.capabilities.supportsRewindFiles !== undefined
-        ? { supportsRewindFiles: agent.capabilities.supportsRewindFiles }
-        : {}),
-      ...(agent.capabilities.supportsRewindBoth !== undefined
-        ? { supportsRewindBoth: agent.capabilities.supportsRewindBoth }
-        : {}),
-    },
+    capabilities: serializeAgentCapabilities(agent.capabilities),
     currentModeId: agent.currentModeId,
     availableModes: [],
     pendingPermissions: [],

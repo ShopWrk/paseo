@@ -180,6 +180,7 @@ export const ru: TranslationResources = {
       noClipboardImage:
         "В текущем буфере обмена нет изображения. Попробуйте вставить его с клавиатуры.",
       pasteImageFailed: "Не удалось вставить изображение",
+      imagesUnsupported: "Этот агент не поддерживает ввод изображений",
       fileTooLarge: "Файл {{fileName}} слишком большой (максимальный размер: {{size}})",
     },
     clientCommands: {

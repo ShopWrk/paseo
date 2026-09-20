@@ -377,6 +377,8 @@ const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z
     supportsRewindFiles: z.boolean().optional().default(false),
     // COMPAT(rewind): added in v0.1.X, drop when floor >= v0.1.X.
     supportsRewindBoth: z.boolean().optional().default(false),
+    // COMPAT(imagePrompts): added for ACP prompt capabilities.
+    supportsImagePrompts: z.boolean().optional(),
   })
   .catchall(z.boolean());
 

@@ -1692,7 +1692,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   constructor(config: AgentSessionConfig, options: ACPAgentSessionOptions) {
     this.provider = options.provider;
     this.terminateProcess = options.terminateProcess ?? terminateWithTreeKill;
-    this.capabilities = options.capabilities;
+    // Capabilities are per-session: initialize() adjusts them from the agent's
+    // advertised ACP capabilities, so each session gets its own copy instead of
+    // mutating the client's shared default flags.
+    this.capabilities = { ...options.capabilities };
     this.logger = options.logger.child({ module: "agent", provider: options.provider });
     this.runtimeSettings = options.runtimeSettings;
     this.defaultCommand = options.defaultCommand;
@@ -1732,6 +1735,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.child = spawned.child;
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      this.applyAgentPromptCapabilities();
 
       const response = await this.runACPRequest(() =>
         this.connection!.newSession({
@@ -1766,6 +1770,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.child = spawned.child;
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      this.applyAgentPromptCapabilities();
       this.sessionId = handle.sessionId;
       this.bootstrapThreadEventPending = true;
 
@@ -1851,15 +1856,32 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.activeForegroundTurnId = turnId;
     this.fallbackAssistantMessageId = null;
     this.submittedUserMessageTurnId = null;
+    this.currentTurnUsage = undefined;
     this.emitBootstrapThreadEvent();
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
     this.emitSubmittedUserMessage(prompt, messageId, turnId, options?.clientMessageId);
+
+    const { contentBlocks, omittedImageCount } = toACPContentBlocks(prompt, {
+      allowImages: this.capabilities.supportsImagePrompts === true,
+    });
+    if (omittedImageCount > 0) {
+      this.pushEvent({
+        type: "timeline",
+        provider: this.provider,
+        turnId,
+        item: {
+          type: "notification",
+          level: "warning",
+          message: `${omittedImageCount} image attachment${omittedImageCount === 1 ? " was" : "s were"} omitted because ${this.provider} does not support image inputs.`,
+        },
+      });
+    }
 
     void this.connection
       .prompt({
         sessionId: this.sessionId,
         messageId,
-        prompt: toACPContentBlocks(prompt),
+        prompt: contentBlocks,
       })
       .then((response) => {
         this.handlePromptResponse(response, turnId);
@@ -2907,8 +2929,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.handleSessionInfoUpdate(update);
         return pendingUserEvents;
       case "usage_update":
-        this.handleUsageUpdate(update);
-        return pendingUserEvents;
+        return [...pendingUserEvents, ...this.handleUsageUpdate(update)];
       case "available_commands_update":
         this.cachedCommands = update.availableCommands.map((command) => ({
           name: command.name,
@@ -3068,12 +3089,33 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
-  private handleUsageUpdate(update: UsageUpdate): void {
-    void update;
+  private applyAgentPromptCapabilities(): void {
+    // ACP prompt content types are opt-in: an agent only accepts the variants it
+    // advertises via `promptCapabilities`. Absent capabilities mean unsupported.
+    const promptCapabilities = this.agentCapabilities?.promptCapabilities;
+    this.capabilities.supportsImagePrompts = promptCapabilities?.image === true;
+  }
+
+  private handleUsageUpdate(update: UsageUpdate): AgentStreamEvent[] {
+    const usage = mapACPUsageUpdate(update);
+    this.currentTurnUsage = mergeAgentUsage(this.currentTurnUsage, usage);
+    return [
+      {
+        type: "usage_updated",
+        provider: this.provider,
+        usage: { ...this.currentTurnUsage },
+        turnId: this.activeForegroundTurnId ?? undefined,
+      },
+    ];
   }
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
-    this.currentTurnUsage = mapACPUsage(response.usage) ?? this.currentTurnUsage;
+    const responseUsage = mapACPUsage(response.usage);
+    if (responseUsage) {
+      // Merge rather than replace so context-window fields captured from
+      // mid-turn `usage_update` notifications survive the final prompt usage.
+      this.currentTurnUsage = mergeAgentUsage(this.currentTurnUsage, responseUsage);
+    }
 
     switch (response.stopReason) {
       case "cancelled":
@@ -3399,26 +3441,77 @@ function normalizeMcpServers(servers?: Record<string, McpServerConfig>): McpServ
   });
 }
 
-function toACPContentBlocks(prompt: AgentPromptInput): ContentBlock[] {
+interface ACPContentBlockConversionOptions {
+  allowImages: boolean;
+}
+
+interface ACPContentBlockConversionResult {
+  contentBlocks: ContentBlock[];
+  omittedImageCount: number;
+}
+
+function toACPContentBlocks(
+  prompt: AgentPromptInput,
+  options: ACPContentBlockConversionOptions = { allowImages: true },
+): ACPContentBlockConversionResult {
   if (typeof prompt === "string") {
-    return [{ type: "text", text: prompt }];
+    return { contentBlocks: [{ type: "text", text: prompt }], omittedImageCount: 0 };
   }
 
   const contentBlocks: ContentBlock[] = [];
+  let omittedImageCount = 0;
   for (const block of prompt) {
     switch (block.type) {
       case "text":
         contentBlocks.push({ type: "text", text: block.text });
         break;
       case "image":
-        contentBlocks.push({ type: "image", data: block.data, mimeType: block.mimeType });
+        if (options.allowImages) {
+          contentBlocks.push({ type: "image", data: block.data, mimeType: block.mimeType });
+        } else {
+          omittedImageCount += 1;
+        }
         break;
       default:
         contentBlocks.push({ type: "text", text: renderPromptAttachmentAsText(block) });
         break;
     }
   }
-  return contentBlocks;
+  return { contentBlocks, omittedImageCount };
+}
+
+function mergeAgentUsage(base: AgentUsage | undefined, patch: AgentUsage): AgentUsage {
+  const merged: AgentUsage = { ...base };
+  if (patch.inputTokens !== undefined) {
+    merged.inputTokens = patch.inputTokens;
+  }
+  if (patch.cachedInputTokens !== undefined) {
+    merged.cachedInputTokens = patch.cachedInputTokens;
+  }
+  if (patch.outputTokens !== undefined) {
+    merged.outputTokens = patch.outputTokens;
+  }
+  if (patch.totalCostUsd !== undefined) {
+    merged.totalCostUsd = patch.totalCostUsd;
+  }
+  if (patch.contextWindowMaxTokens !== undefined) {
+    merged.contextWindowMaxTokens = patch.contextWindowMaxTokens;
+  }
+  if (patch.contextWindowUsedTokens !== undefined) {
+    merged.contextWindowUsedTokens = patch.contextWindowUsedTokens;
+  }
+  return merged;
+}
+
+function mapACPUsageUpdate(update: UsageUpdate): AgentUsage {
+  const usage: AgentUsage = {
+    contextWindowMaxTokens: update.size,
+    contextWindowUsedTokens: update.used,
+  };
+  if (update.cost && update.cost.currency === "USD") {
+    usage.totalCostUsd = update.cost.amount;
+  }
+  return usage;
 }
 
 function extractPromptText(prompt: AgentPromptInput): string {
