@@ -180,6 +180,7 @@ export const es: TranslationResources = {
       noClipboardImage:
         "No hay ninguna imagen en el portapapeles actual. Prueba a pegar desde el teclado.",
       pasteImageFailed: "No se pudo pegar la imagen",
+      imagesUnsupported: "Este agente no admite imágenes",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {

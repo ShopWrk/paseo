@@ -182,6 +182,7 @@ export const fr: TranslationResources = {
       noClipboardImage:
         "Aucune image dans le presse-papiers actuel. Essayez de coller depuis votre clavier.",
       pasteImageFailed: "Impossible de coller l’image",
+      imagesUnsupported: "Cet agent ne prend pas en charge les images",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {

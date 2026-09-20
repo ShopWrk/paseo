@@ -1,4 +1,5 @@
 import { collectRetainedAttachmentIds } from "@/attachments/gc-retention";
+import { normalizeImageForSend } from "@/attachments/normalize-image-for-send";
 import { getAttachmentStore } from "@/attachments/store";
 import type { AttachmentMetadata, SaveAttachmentInput } from "@/attachments/types";
 
@@ -104,10 +105,10 @@ export async function encodeAttachmentsForSend(
     attachments.map(async (attachment) => {
       try {
         const data = await store.encodeBase64({ attachment });
-        return {
+        return await normalizeImageForSend({
           data,
           mimeType: attachment.mimeType,
-        };
+        });
       } catch (error) {
         console.error("[attachments] Failed to encode attachment for send", {
           id: attachment.id,

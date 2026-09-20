@@ -268,11 +268,13 @@ function buildRealtimeVoiceButtonStyle(
 function buildAgentStateSelector(serverId: string, agentId: string) {
   return (state: ReturnType<typeof useSessionStore.getState>) => {
     const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
+    const usage = agent?.lastUsage;
     return {
       status: agent?.status ?? null,
-      contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
-      contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
-      totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
+      contextWindowMaxTokens: usage?.contextWindowMaxTokens ?? null,
+      contextWindowUsedTokens: usage?.contextWindowUsedTokens ?? null,
+      totalCostUsd: usage?.totalCostUsd ?? null,
+      supportsImagePrompts: agent?.capabilities?.supportsImagePrompts ?? null,
       model: agent?.model ?? null,
       provider: agent?.provider ?? null,
     };
@@ -1487,14 +1489,20 @@ function ComposerContentImpl({
   >(null);
   const onSubmitMessageRef = useRef(onSubmitMessage);
 
+  const imagesSupported = agentState.supportsImagePrompts !== false;
+
   const addImages = useCallback(
     (images: ImageAttachment[]) => {
+      if (!imagesSupported) {
+        toastErrorRef.current(t("composer.errors.imagesUnsupported"));
+        return;
+      }
       setSelectedAttachments((prev) => [
         ...prev,
         ...images.map((metadata) => ({ kind: "image" as const, metadata })),
       ]);
     },
-    [setSelectedAttachments],
+    [imagesSupported, setSelectedAttachments, t],
   );
 
   const addFiles = useCallback(
@@ -2155,17 +2163,18 @@ function ComposerContentImpl({
   );
 
   const attachmentMenuItems = useMemo<AttachmentMenuItem[]>(() => {
-    const items: AttachmentMenuItem[] = [
-      {
+    const items: AttachmentMenuItem[] = [];
+    if (imagesSupported) {
+      items.push({
         id: "image",
         label: t("composer.attachments.addImage"),
         icon: <ThemedImageIcon size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
         onSelect: () => {
           void handlePickImage();
         },
-      },
-    ];
-    if (isNative) {
+      });
+    }
+    if (isNative && imagesSupported) {
       items.push({
         id: "paste-image",
         label: t("composer.attachments.pasteImage"),
@@ -2202,6 +2211,7 @@ function ComposerContentImpl({
     handlePasteImage,
     handlePickFile,
     handlePickImage,
+    imagesSupported,
     pluginAttachments.menuItems,
     t,
   ]);

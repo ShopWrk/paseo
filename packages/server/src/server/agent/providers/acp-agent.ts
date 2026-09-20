@@ -1732,6 +1732,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.child = spawned.child;
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      this.applyAgentPromptCapabilities();
 
       const response = await this.runACPRequest(() =>
         this.connection!.newSession({
@@ -1766,6 +1767,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.child = spawned.child;
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      this.applyAgentPromptCapabilities();
       this.sessionId = handle.sessionId;
       this.bootstrapThreadEventPending = true;
 
@@ -1855,11 +1857,27 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
     this.emitSubmittedUserMessage(prompt, messageId, turnId, options?.clientMessageId);
 
+    const { contentBlocks, omittedImageCount } = toACPContentBlocks(prompt, {
+      allowImages: this.capabilities.supportsImagePrompts === true,
+    });
+    if (omittedImageCount > 0) {
+      this.pushEvent({
+        type: "timeline",
+        provider: this.provider,
+        turnId,
+        item: {
+          type: "notification",
+          level: "warning",
+          message: `${omittedImageCount} image attachment${omittedImageCount === 1 ? " was" : "s were"} omitted because ${this.provider} does not support image inputs.`,
+        },
+      });
+    }
+
     void this.connection
       .prompt({
         sessionId: this.sessionId,
         messageId,
-        prompt: toACPContentBlocks(prompt),
+        prompt: contentBlocks,
       })
       .then((response) => {
         this.handlePromptResponse(response, turnId);
@@ -3068,6 +3086,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
+  private applyAgentPromptCapabilities(): void {
+    // ACP prompt content types are opt-in: an agent only accepts the variants it
+    // advertises via `promptCapabilities`. Absent capabilities mean unsupported.
+    const promptCapabilities = this.agentCapabilities?.promptCapabilities;
+    this.capabilities.supportsImagePrompts = promptCapabilities?.image === true;
+  }
+
   private handleUsageUpdate(update: UsageUpdate): void {
     void update;
   }
@@ -3399,26 +3424,43 @@ function normalizeMcpServers(servers?: Record<string, McpServerConfig>): McpServ
   });
 }
 
-function toACPContentBlocks(prompt: AgentPromptInput): ContentBlock[] {
+interface ACPContentBlockConversionOptions {
+  allowImages: boolean;
+}
+
+interface ACPContentBlockConversionResult {
+  contentBlocks: ContentBlock[];
+  omittedImageCount: number;
+}
+
+function toACPContentBlocks(
+  prompt: AgentPromptInput,
+  options: ACPContentBlockConversionOptions = { allowImages: true },
+): ACPContentBlockConversionResult {
   if (typeof prompt === "string") {
-    return [{ type: "text", text: prompt }];
+    return { contentBlocks: [{ type: "text", text: prompt }], omittedImageCount: 0 };
   }
 
   const contentBlocks: ContentBlock[] = [];
+  let omittedImageCount = 0;
   for (const block of prompt) {
     switch (block.type) {
       case "text":
         contentBlocks.push({ type: "text", text: block.text });
         break;
       case "image":
-        contentBlocks.push({ type: "image", data: block.data, mimeType: block.mimeType });
+        if (options.allowImages) {
+          contentBlocks.push({ type: "image", data: block.data, mimeType: block.mimeType });
+        } else {
+          omittedImageCount += 1;
+        }
         break;
       default:
         contentBlocks.push({ type: "text", text: renderPromptAttachmentAsText(block) });
         break;
     }
   }
-  return contentBlocks;
+  return { contentBlocks, omittedImageCount };
 }
 
 function extractPromptText(prompt: AgentPromptInput): string {

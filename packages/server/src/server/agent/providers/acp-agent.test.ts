@@ -146,6 +146,7 @@ function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
         supportsMcpServers: true,
         supportsReasoningStream: true,
         supportsToolInvocations: true,
+        supportsImagePrompts: true,
       },
       ...(terminateProcess ? { terminateProcess } : {}),
     },
@@ -4031,5 +4032,95 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
       cwd: "/tmp/paseo-acp-test",
       mcpServers: [],
     });
+  });
+});
+
+describe("ACPAgentSession prompt capabilities", () => {
+  test("omits image blocks and warns when the agent does not advertise image prompts", async () => {
+    const session = createSessionWithConfig();
+    const events: AgentStreamEvent[] = [];
+    const prompt = vi.fn().mockResolvedValue({ stopReason: "end_turn" });
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.connection = { prompt };
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn([
+      { type: "text", text: "look at this" },
+      { type: "image", data: "AA==", mimeType: "image/png" },
+    ]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(prompt).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      messageId: expect.any(String),
+      prompt: [{ type: "text", text: "look at this" }],
+    });
+    const warning = events.find(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "notification" &&
+        event.item.level === "warning",
+    );
+    expect(warning).toMatchObject({
+      turnId: expect.any(String),
+      item: { message: expect.stringContaining("does not support image inputs") },
+    });
+  });
+});
+
+describe("ACPAgentSession prompt capability discovery", () => {
+  function makeCapableSession(agentCapabilities: unknown): ACPAgentSession {
+    class TestSession extends ACPAgentSession {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: createProbeChildStub(),
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "session-1",
+              modes: null,
+              models: null,
+              configOptions: [],
+            }),
+          } as unknown as ClientSideConnection,
+          initialize: { agentCapabilities },
+        } as SpawnedACPProcess;
+      }
+    }
+
+    return new TestSession(
+      { provider: "cursor", cwd: "/tmp/paseo-acp-test" },
+      {
+        provider: "cursor",
+        logger: createTestLogger(),
+        defaultCommand: ["cursor-agent", "acp"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+      },
+    );
+  }
+
+  test("marks supportsImagePrompts when the agent advertises image prompts", async () => {
+    const session = makeCapableSession({ promptCapabilities: { image: true } });
+
+    await session.initializeNewSession();
+
+    expect(session.capabilities.supportsImagePrompts).toBe(true);
+  });
+
+  test("leaves supportsImagePrompts false when prompt capabilities are absent", async () => {
+    const session = makeCapableSession({});
+
+    await session.initializeNewSession();
+
+    expect(session.capabilities.supportsImagePrompts).toBe(false);
   });
 });

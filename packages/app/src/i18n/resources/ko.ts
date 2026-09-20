@@ -178,6 +178,7 @@ export const ko: TranslationResources = {
       uploadFailed: "파일을 업로드하지 못했습니다",
       noClipboardImage: "현재 클립보드에 이미지가 없습니다. 키보드에서 붙여넣기를 시도해 보세요.",
       pasteImageFailed: "이미지를 붙여넣지 못했습니다.",
+      imagesUnsupported: "이 에이전트는 이미지 입력을 지원하지 않습니다.",
       fileTooLarge: "{{fileName}}이(가) 너무 큽니다 (최대 {{size}})",
     },
     clientCommands: {
