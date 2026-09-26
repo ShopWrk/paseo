@@ -164,7 +164,9 @@ function PushNotificationRouter() {
     const serverId = target.serverId;
     const workspaceId = target.workspaceId;
     const agentId = target.agentId;
-    if (serverId && workspaceId && agentId) {
+    // Payload workspaceId is advisory — navigateToAgent resolves the agent's
+    // live workspace from the store first and falls back to the payload.
+    if (serverId && agentId) {
       navigateToAgent({ serverId, workspaceId, agentId, pin: true });
       return;
     }
