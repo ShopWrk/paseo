@@ -58,7 +58,7 @@ index 2abb4a2..8ca967f 100644
      onAnimValInit?: (animVals: ReturnType<typeof useAnimatedValues>) => void;
      itemEnteringAnimation?: AnimateProps<Animated.View>["entering"];
 diff --git a/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx b/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx
-index 7c88afc..6f274e8 100644
+index 7c88afc..8526487 100644
 --- a/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx
 +++ b/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx
 @@ -19,6 +19,7 @@ import {
@@ -217,7 +217,7 @@ index 7c88afc..6f274e8 100644
        setActiveKey(activeKey);
        onDragBegin?.(index);
      }
-@@ -218,8 +333,48 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -218,8 +333,31 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
      props.onRelease?.(index);
    });
  
@@ -236,23 +236,6 @@ index 7c88afc..6f274e8 100644
 +    disabled.value = false;
 +  };
 +
-+  // RNGH can drop onFinalize for a recognizer that armed but never activated
-+  // (and for some cancels inside nested simultaneous handlers). The touch
-+  // stream callbacks are delivered regardless, so release the latch when the
-+  // last finger lifts or the stream is cancelled on a session that never
-+  // activated. A pan that did activate is left to onEnd/onFinalize, which may
-+  // still commit a reorder — resetting here would eat it.
-+  const endGestureSessionFromTouch = (event: { numberOfTouches: number }) => {
-+    "worklet";
-+    if (gestureDisabled.value || event.numberOfTouches > 0) return;
-+    if (panActivated.value) return;
-+    const sessionId = gestureSessionId.value;
-+    if (!gestureSessionActive.value || terminalHandled.value) return;
-+    gestureSessionActive.value = false;
-+    finalizeCancelledDrag();
-+    runOnJS(onGestureFinalize)(sessionId, false);
-+  };
-+
    const onDragEnd = useStableCallback(
 -    ({ from, to }: { from: number; to: number }) => {
 +    ({ from, to, sessionId }: { from: number; to: number; sessionId: number }) => {
@@ -267,7 +250,7 @@ index 7c88afc..6f274e8 100644
        const { onDragEnd, data } = props;
  
        const newData = [...data];
-@@ -238,26 +393,6 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -238,26 +376,6 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
      props.onPlaceholderIndexChange?.(index);
    });
  
@@ -294,12 +277,10 @@ index 7c88afc..6f274e8 100644
    useAnimatedReaction(
      () => {
        return spacerIndexAnim.value;
-@@ -271,23 +406,55 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -271,23 +389,72 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
    );
  
    const gestureDisabled = useSharedValue(false);
--
--  const panGesture = Gesture.Pan()
 +  const touchStartX = useSharedValue(0);
 +  const touchStartY = useSharedValue(0);
 +  const manualPanActivated = useSharedValue(false);
@@ -308,6 +289,24 @@ index 7c88afc..6f274e8 100644
 +  const panActivated = useSharedValue(false);
 +  const coordinatesDragWithExternalGesture = Boolean(props.simultaneousHandlers);
 +
++  // RNGH can drop onFinalize for a recognizer that armed but never activated
++  // (and for some cancels inside nested simultaneous handlers). The touch
++  // stream callbacks are delivered regardless, so release the latch when the
++  // last finger lifts or the stream is cancelled on a session that never
++  // activated. A pan that did activate is left to onEnd/onFinalize, which may
++  // still commit a reorder — resetting here would eat it.
++  const endGestureSessionFromTouch = (event: { numberOfTouches: number }) => {
++    "worklet";
++    if (gestureDisabled.value || event.numberOfTouches > 0) return;
++    if (panActivated.value) return;
++    const sessionId = gestureSessionId.value;
++    if (!gestureSessionActive.value || terminalHandled.value) return;
++    gestureSessionActive.value = false;
++    finalizeCancelledDrag();
++    runOnJS(onGestureFinalize)(sessionId, false);
++  };
+ 
+-  const panGesture = Gesture.Pan()
 +  let panGesture = Gesture.Pan()
      .onBegin((evt) => {
 +      manualPanActivated.value = false;
