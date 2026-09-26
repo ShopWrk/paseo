@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigation } from "@react-navigation/native";
 import { StyleSheet, View } from "react-native";
-import { useGlobalSearchParams, useLocalSearchParams, useRootNavigationState } from "expo-router";
+import {
+  router,
+  useGlobalSearchParams,
+  useLocalSearchParams,
+  useRootNavigationState,
+  type Href,
+} from "expo-router";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import { RetainedPanel } from "@/components/retained-panel";
 import {
@@ -25,6 +31,7 @@ import {
   shouldKeepWorkspaceDeckEntryMounted,
 } from "@/screens/workspace/workspace-deck-retention";
 import {
+  buildHostWorkspaceOpenRoute,
   decodeWorkspaceIdFromPathSegment,
   parseWorkspaceOpenIntent,
   type WorkspaceOpenIntent,
@@ -33,7 +40,12 @@ import {
   replaceBrowserRouteWithCanonicalHostWorkspaceRoute,
   stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit,
 } from "@/utils/host-route-browser";
+import {
+  normalizeWorkspaceOpaqueId,
+  resolveWorkspaceMapKeyByIdentity,
+} from "@/utils/workspace-identity";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
+import { useSessionStore } from "@/stores/session-store";
 import { isNative, isWeb } from "@/constants/platform";
 import { RenderProfile } from "@/utils/render-profiler";
 
@@ -83,6 +95,38 @@ function clearConsumedOpenIntent(input: {
   if (isWeb) {
     stripOpenSearchParamFromBrowserUrl();
   }
+}
+
+// A deep link's workspaceId can be stale (e.g. a notification sent before the
+// agent moved workspaces). When the store already knows where the agent lives
+// and it is a different existing workspace, land there instead of pinning the
+// tab into the wrong one.
+function resolveLiveAgentWorkspaceRoute(input: {
+  serverId: string;
+  workspaceId: string;
+  agentId: string;
+  openValue: string;
+}): Href | null {
+  const session = useSessionStore.getState().sessions[input.serverId];
+  const agent = session?.agents.get(input.agentId) ?? session?.agentDetails.get(input.agentId);
+  const liveWorkspaceId = normalizeWorkspaceOpaqueId(agent?.workspaceId);
+  if (!liveWorkspaceId) {
+    return null;
+  }
+  const workspaces = session?.workspaces;
+  const liveWorkspaceKey = resolveWorkspaceMapKeyByIdentity({
+    workspaces,
+    workspaceId: liveWorkspaceId,
+  });
+  const routeWorkspaceKey = resolveWorkspaceMapKeyByIdentity({
+    workspaces,
+    workspaceId: input.workspaceId,
+  });
+  if (!liveWorkspaceKey || liveWorkspaceKey === routeWorkspaceKey) {
+    return null;
+  }
+  const route = buildHostWorkspaceOpenRoute(input.serverId, liveWorkspaceKey, input.openValue);
+  return route === "/" ? null : (route as Href);
 }
 
 export default function HostWorkspaceIndexRoute() {
@@ -136,6 +180,18 @@ function HostWorkspaceRouteContent() {
     if (!hasHydratedWorkspaceLayoutStore) {
       return;
     }
+    if (isAgentOpenIntent && hasHydratedWorkspaces) {
+      const correctedRoute = resolveLiveAgentWorkspaceRoute({
+        serverId,
+        workspaceId,
+        agentId: openIntent.agentId,
+        openValue,
+      });
+      if (correctedRoute) {
+        router.replace(correctedRoute);
+        return;
+      }
+    }
     if (isOpenIntentWaitingForWorkspace) {
       return;
     }
@@ -173,6 +229,8 @@ function HostWorkspaceRouteContent() {
     setIntentConsumed(true);
   }, [
     hasHydratedWorkspaceLayoutStore,
+    hasHydratedWorkspaces,
+    isAgentOpenIntent,
     isOpenIntentWaitingForWorkspace,
     navigation,
     openIntent,
