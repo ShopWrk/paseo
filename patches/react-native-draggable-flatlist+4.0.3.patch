@@ -58,7 +58,7 @@ index 2abb4a2..8ca967f 100644
      onAnimValInit?: (animVals: ReturnType<typeof useAnimatedValues>) => void;
      itemEnteringAnimation?: AnimateProps<Animated.View>["entering"];
 diff --git a/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx b/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx
-index 7c88afc..8526487 100644
+index 7c88afc..01cb7f7 100644
 --- a/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx
 +++ b/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx
 @@ -19,6 +19,7 @@ import {
@@ -87,7 +87,7 @@ index 7c88afc..8526487 100644
  
    const {
      dragHitSlop = DEFAULT_PROPS.dragHitSlop,
-@@ -144,19 +156,122 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -144,19 +156,133 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
      });
    }, [props.data, keyExtractor, keyToIndexRef]);
  
@@ -116,19 +116,30 @@ index 7c88afc..8526487 100644
 +    reset();
 +    if (activeDrag) {
 +      propsRef.current.onRelease?.(activeDrag.index);
++      propsRef.current.onDragTerminate?.();
 +    }
-+    propsRef.current.onDragTerminate?.();
 +  });
 +
 +  // The settle spring's completion callback is the only place onDragEnd runs.
-+  // If it is dropped, `disabled` stays latched and every gesture dead-ends.
++  // If it never fires, the watchdog commits the pending reorder itself so a
++  // dropped callback can't silently lose it or leave `disabled` latched.
 +  const armSettleWatchdog = useStableCallback(() => {
 +    disarmSettleWatchdog();
++    settleCompleted.value = false;
 +    settleWatchdogRef.current = setTimeout(() => {
 +      settleWatchdogRef.current = null;
-+      if (!activeDragRef.current) return;
++      const activeDrag = activeDragRef.current;
++      // The spring callback already ran — its runOnJS(onDragEnd) is queued
++      // behind other JS work and will land the commit on its own.
++      if (!activeDrag || settleCompleted.value) return;
++      const to =
++        spacerIndexAnim.value >= 0 ? spacerIndexAnim.value : activeDrag.index;
++      onDragEnd({
++        from: activeDrag.index,
++        to,
++        sessionId: activeDrag.sessionId,
++      });
 +      disabled.value = false;
-+      resetOrphanedDrag();
 +    }, 1500);
 +  });
 +
@@ -217,7 +228,7 @@ index 7c88afc..8526487 100644
        setActiveKey(activeKey);
        onDragBegin?.(index);
      }
-@@ -218,8 +333,31 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -218,8 +344,31 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
      props.onRelease?.(index);
    });
  
@@ -250,7 +261,7 @@ index 7c88afc..8526487 100644
        const { onDragEnd, data } = props;
  
        const newData = [...data];
-@@ -238,26 +376,6 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -238,26 +387,6 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
      props.onPlaceholderIndexChange?.(index);
    });
  
@@ -277,7 +288,7 @@ index 7c88afc..8526487 100644
    useAnimatedReaction(
      () => {
        return spacerIndexAnim.value;
-@@ -271,23 +389,72 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -271,23 +400,82 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
    );
  
    const gestureDisabled = useSharedValue(false);
@@ -287,6 +298,9 @@ index 7c88afc..8526487 100644
 +  // True once the pan recognizer activates for this session (onUpdate only
 +  // fires after activation in both activation modes).
 +  const panActivated = useSharedValue(false);
++  // Set on the UI thread the moment the settle spring's callback runs, so the
++  // JS-side watchdog can tell a queued-but-live commit from a dropped one.
++  const settleCompleted = useSharedValue(false);
 +  const coordinatesDragWithExternalGesture = Boolean(props.simultaneousHandlers);
 +
 +  // RNGH can drop onFinalize for a recognizer that armed but never activated
@@ -295,9 +309,16 @@ index 7c88afc..8526487 100644
 +  // last finger lifts or the stream is cancelled on a session that never
 +  // activated. A pan that did activate is left to onEnd/onFinalize, which may
 +  // still commit a reorder — resetting here would eat it.
-+  const endGestureSessionFromTouch = (event: { numberOfTouches: number }) => {
++  const endGestureSessionFromTouch = (
++    event: { numberOfTouches: number },
++    cancelled?: boolean,
++  ) => {
 +    "worklet";
-+    if (gestureDisabled.value || event.numberOfTouches > 0) return;
++    if (gestureDisabled.value) return;
++    // iOS dispatches the cancel event before RNGH decrements its pointer
++    // count, so a cancel always reports >= 1 touch. Cancels end the whole
++    // stream — there is no partial cancel to preserve.
++    if (!cancelled && event.numberOfTouches > 0) return;
 +    if (panActivated.value) return;
 +    const sessionId = gestureSessionId.value;
 +    if (!gestureSessionActive.value || terminalHandled.value) return;
@@ -352,7 +373,7 @@ index 7c88afc..8526487 100644
        // Set touch val to current translate val
        isTouchActiveNative.value = false;
        const translation = horizontalAnim.value
-@@ -299,7 +466,9 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -299,32 +487,91 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
  
        // Only call onDragEnd if actually dragging a cell
        if (activeIndexAnim.value === -1 || disabled.value) return;
@@ -362,7 +383,10 @@ index 7c88afc..8526487 100644
        runOnJS(onRelease)(activeIndexAnim.value);
        const springTo = placeholderOffset.value - activeCellOffset.value;
        touchTranslate.value = withSpring(
-@@ -309,22 +478,78 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+         springTo,
+         animationConfigRef.value,
+         () => {
++          settleCompleted.value = true;
            runOnJS(onDragEnd)({
              from: activeIndexAnim.value,
              to: spacerIndexAnim.value,
@@ -433,7 +457,7 @@ index 7c88afc..8526487 100644
 +      endGestureSessionFromTouch(event);
 +    })
 +    .onTouchesCancelled((event) => {
-+      endGestureSessionFromTouch(event);
++      endGestureSessionFromTouch(event, true);
      });
  
    if (dragHitSlop) panGesture.hitSlop(dragHitSlop);
@@ -444,7 +468,7 @@ index 7c88afc..8526487 100644
      const activeOffset = [-activationDistanceProp, activationDistanceProp];
      if (props.horizontal) {
        panGesture.activeOffsetX(activeOffset);
-@@ -332,6 +557,21 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -332,6 +579,21 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
        panGesture.activeOffsetY(activeOffset);
      }
    }
@@ -466,7 +490,7 @@ index 7c88afc..8526487 100644
  
    const onScroll = useStableCallback((scrollOffset: number) => {
      props.onScrollOffsetChange?.(scrollOffset);
-@@ -373,8 +613,9 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -373,8 +635,9 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
        horizontal={!!props.horizontal}
        layoutAnimationDisabled={layoutAnimationDisabled}
      >
