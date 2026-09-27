@@ -45,7 +45,7 @@ import {
   resolveWorkspaceMapKeyByIdentity,
 } from "@/utils/workspace-identity";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
-import { useSessionStore } from "@/stores/session-store";
+import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import { isNative, isWeb } from "@/constants/platform";
 import { RenderProfile } from "@/utils/render-profiler";
 
@@ -104,22 +104,19 @@ function clearConsumedOpenIntent(input: {
 function resolveLiveAgentWorkspaceRoute(input: {
   serverId: string;
   workspaceId: string;
-  agentId: string;
+  liveWorkspaceId: string | null;
+  workspaces: Map<string, WorkspaceDescriptor> | null | undefined;
   openValue: string;
 }): Href | null {
-  const session = useSessionStore.getState().sessions[input.serverId];
-  const agent = session?.agents.get(input.agentId) ?? session?.agentDetails.get(input.agentId);
-  const liveWorkspaceId = normalizeWorkspaceOpaqueId(agent?.workspaceId);
-  if (!liveWorkspaceId) {
+  if (!input.liveWorkspaceId) {
     return null;
   }
-  const workspaces = session?.workspaces;
   const liveWorkspaceKey = resolveWorkspaceMapKeyByIdentity({
-    workspaces,
-    workspaceId: liveWorkspaceId,
+    workspaces: input.workspaces,
+    workspaceId: input.liveWorkspaceId,
   });
   const routeWorkspaceKey = resolveWorkspaceMapKeyByIdentity({
-    workspaces,
+    workspaces: input.workspaces,
     workspaceId: input.workspaceId,
   });
   if (!liveWorkspaceKey || liveWorkspaceKey === routeWorkspaceKey) {
@@ -160,6 +157,16 @@ function HostWorkspaceRouteContent() {
   const workspaceExists = useWorkspaceExists(serverId, workspaceId);
   const openIntent = useMemo(() => parseWorkspaceOpenIntent(openValue), [openValue]);
   const isAgentOpenIntent = openIntent?.kind === "agent";
+  // Subscribed (not getState) so an agent record landing after workspace
+  // hydration re-fires the redirect effect below.
+  const liveAgentWorkspaceId = useSessionStore((s) => {
+    if (openIntent?.kind !== "agent") return null;
+    const session = s.sessions[serverId];
+    const agent =
+      session?.agents.get(openIntent.agentId) ?? session?.agentDetails.get(openIntent.agentId);
+    return normalizeWorkspaceOpaqueId(agent?.workspaceId);
+  });
+  const sessionWorkspaces = useSessionStore((s) => s.sessions[serverId]?.workspaces);
   const isOpenIntentWaitingForWorkspace = Boolean(
     isAgentOpenIntent && (!hasHydratedWorkspaces || !workspaceExists),
   );
@@ -184,7 +191,8 @@ function HostWorkspaceRouteContent() {
       const correctedRoute = resolveLiveAgentWorkspaceRoute({
         serverId,
         workspaceId,
-        agentId: openIntent.agentId,
+        liveWorkspaceId: liveAgentWorkspaceId,
+        workspaces: sessionWorkspaces,
         openValue,
       });
       if (correctedRoute) {
@@ -232,11 +240,13 @@ function HostWorkspaceRouteContent() {
     hasHydratedWorkspaces,
     isAgentOpenIntent,
     isOpenIntentWaitingForWorkspace,
+    liveAgentWorkspaceId,
     navigation,
     openIntent,
     openValue,
     rootNavigationState?.key,
     serverId,
+    sessionWorkspaces,
     workspaceId,
   ]);
 

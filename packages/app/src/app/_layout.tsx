@@ -164,9 +164,12 @@ function PushNotificationRouter() {
     const serverId = target.serverId;
     const workspaceId = target.workspaceId;
     const agentId = target.agentId;
+    const terminalId = target.terminalId;
     // Payload workspaceId is advisory — navigateToAgent resolves the agent's
     // live workspace from the store first and falls back to the payload.
-    if (serverId && agentId) {
+    // A payload carrying terminalId keeps its dedicated terminal route even
+    // when it also names an agent.
+    if (serverId && agentId && !terminalId) {
       navigateToAgent({ serverId, workspaceId, agentId, pin: true });
       return;
     }

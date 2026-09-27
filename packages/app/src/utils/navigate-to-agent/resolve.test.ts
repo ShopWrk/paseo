@@ -100,6 +100,24 @@ describe("resolveNavigateToAgent", () => {
     ]);
   });
 
+  it("uses the input workspaceId when the store value is an empty string", () => {
+    const { deps, tabNavigations } = createFakeNavigators({ agentWorkspaceId: "" });
+
+    resolveNavigateToAgent(
+      { serverId: SERVER_ID, agentId: AGENT_ID, workspaceId: WORKSPACE_ID },
+      deps,
+    );
+
+    expect(tabNavigations).toEqual([
+      {
+        serverId: SERVER_ID,
+        workspaceId: WORKSPACE_ID,
+        target: { kind: "agent", agentId: AGENT_ID },
+        pin: undefined,
+      },
+    ]);
+  });
+
   it("falls back to the host agent route when the agent has no workspaceId", () => {
     const { deps, hostNavigations, tabNavigations } = createFakeNavigators({
       agentWorkspaceId: null,
