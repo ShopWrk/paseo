@@ -1,20 +1,47 @@
 import type {
   ProviderConnectRequest,
+  ProviderCatalogOptions,
   ProviderEvent,
   ProviderInput,
-} from "@getpaseo/plugin/provider";
-import { ProviderEventSchema, ProviderInputSchema } from "@getpaseo/plugin/provider";
+} from "@getpaseo/plugin/server/provider";
+import { ProviderEventSchema, ProviderInputSchema } from "@getpaseo/plugin/server/provider";
 import { z } from "zod";
 
 export interface PluginProviderMetadata {
+  hasCatalogCacheKey?: boolean;
   id: string;
   label: string;
   description?: string;
   iconPath?: string;
 }
 
+export interface PluginUsageSourceMetadata {
+  id: string;
+  label: string;
+  icon?: string;
+  discover: boolean;
+}
+
 export type PluginProcessRequest =
-  | { type: "initialize"; pluginId: string; bundle: string; appVersion: string }
+  | {
+      type: "initialize";
+      pluginId: string;
+      bundle: string;
+      appVersion: string;
+      pluginDirectory: string;
+      settingsDirectory?: string;
+    }
+  | {
+      type: "provider.catalog_key";
+      requestId: string;
+      providerId: string;
+      options: ProviderCatalogOptions;
+    }
+  | { type: "hook"; requestId: string; kind: "event" | "before"; name: string; input: unknown }
+  | { type: "hook.cancel"; requestId: string }
+  | { type: "usage.identify"; requestId: string; sourceId: string; input: unknown }
+  | { type: "usage.fetch"; requestId: string; sourceId: string; input: unknown }
+  | { type: "usage.discover"; requestId: string; sourceId: string }
   | { type: "invoke"; requestId: string; method: string; input: unknown }
   | {
       type: "provider.connect";
@@ -34,7 +61,15 @@ export type PluginProcessRequest =
   | { type: "paseo_close" };
 
 export type PluginProcessMessage =
-  | { type: "ready"; methods: string[]; providers: PluginProviderMetadata[] }
+  | { type: "settings.changed"; settingsId: string }
+  | { type: "hooks.changed"; hooks: { events: string[]; before: string[] } }
+  | {
+      type: "ready";
+      methods: string[];
+      providers: PluginProviderMetadata[];
+      usageSources?: PluginUsageSourceMetadata[];
+      hooks?: { events: string[]; before: string[] };
+    }
   | { type: "result"; requestId: string; output: unknown }
   | { type: "error"; requestId: string; error: string }
   | { type: "fatal"; error: string }
@@ -57,12 +92,23 @@ export type PluginProcessMessage =
   | { type: "paseo_frame"; data: string | Uint8Array; isBinary: boolean }
   | { type: "paseo_close" };
 
+const hooksSchema = z.object({ events: z.array(z.string()), before: z.array(z.string()) }).strict();
+
 const providerMetadataSchema = z
   .object({
     id: z.string().min(1),
     label: z.string().min(1),
     description: z.string().optional(),
     iconPath: z.string().optional(),
+    hasCatalogCacheKey: z.boolean().optional(),
+  })
+  .strict();
+const usageSourceMetadataSchema = z
+  .object({
+    id: z.string().min(1),
+    label: z.string().min(1),
+    icon: z.string().optional(),
+    discover: z.boolean(),
   })
   .strict();
 const providerConnectRequestSchema = z
@@ -85,7 +131,55 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
         pluginId: z.string().min(1),
         bundle: z.string(),
         appVersion: z.string(),
+        pluginDirectory: z.string(),
+        settingsDirectory: z.string().optional(),
       })
+      .strict(),
+    z
+      .object({
+        type: z.literal("provider.catalog_key"),
+        requestId: z.string().min(1),
+        providerId: z.string().min(1),
+        options: z.discriminatedUnion("scope", [
+          z.object({ scope: z.literal("global"), force: z.boolean().optional() }).strict(),
+          z
+            .object({
+              scope: z.literal("workspace"),
+              cwd: z.string(),
+              force: z.boolean().optional(),
+            })
+            .strict(),
+        ]),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("hook"),
+        requestId: z.string(),
+        kind: z.enum(["event", "before"]),
+        name: z.string(),
+        input: z.unknown(),
+      })
+      .strict(),
+    z.object({ type: z.literal("hook.cancel"), requestId: z.string() }).strict(),
+    z
+      .object({
+        type: z.literal("usage.identify"),
+        requestId: z.string(),
+        sourceId: z.string(),
+        input: z.unknown(),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("usage.fetch"),
+        requestId: z.string(),
+        sourceId: z.string(),
+        input: z.unknown(),
+      })
+      .strict(),
+    z
+      .object({ type: z.literal("usage.discover"), requestId: z.string(), sourceId: z.string() })
       .strict(),
     z
       .object({
@@ -121,11 +215,15 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
 export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.discriminatedUnion(
   "type",
   [
+    z.object({ type: z.literal("settings.changed"), settingsId: z.string() }).strict(),
+    z.object({ type: z.literal("hooks.changed"), hooks: hooksSchema }).strict(),
     z
       .object({
         type: z.literal("ready"),
         methods: z.array(z.string()),
         providers: z.array(providerMetadataSchema),
+        usageSources: z.array(usageSourceMetadataSchema).optional(),
+        hooks: hooksSchema.optional(),
       })
       .strict(),
     z

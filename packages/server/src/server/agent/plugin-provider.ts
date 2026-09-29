@@ -21,7 +21,7 @@ import {
   type ProviderSessionConfig,
   type ProviderContent,
   type ProviderTimelineItem,
-} from "@getpaseo/plugin/provider";
+} from "@getpaseo/plugin/server/provider";
 import type {
   AgentCapabilityFlags,
   AgentClient,
@@ -51,6 +51,7 @@ import type {
   ProviderRefreshContext,
   SteerActiveTurnOptions,
   SteerResult,
+  UsageReference,
 } from "./agent-sdk-types.js";
 import {
   isDefaultAgentCreateConfigUnattended,
@@ -58,6 +59,7 @@ import {
 } from "./create-agent-mode.js";
 import type { ProviderDefinition } from "./provider-registry.js";
 import { runProviderTurn } from "./providers/provider-runner.js";
+import { StaleProviderSessionError } from "./stale-provider-session-error.js";
 
 interface Deferred<Value> {
   promise: Promise<Value>;
@@ -91,6 +93,9 @@ function deferred<Value>(): Deferred<Value> {
     resolve = onResolve;
     reject = onReject;
   });
+  // Provider events can reject before send() settles and the caller awaits this promise.
+  // Observe that interval without replacing the rejecting promise returned to the caller.
+  void promise.catch(() => undefined);
   return { promise, resolve, reject };
 }
 
@@ -99,6 +104,20 @@ function providerError(error: ProviderError): Error {
     code: error.code,
     diagnostic: error.diagnostic,
   });
+}
+
+function isProviderRequestReply(
+  event: ProviderEvent,
+): event is Extract<
+  ProviderEvent,
+  { type: "request.completed" | "catalog" | "sessions" | "usage_reference" }
+> {
+  return (
+    event.type === "request.completed" ||
+    event.type === "catalog" ||
+    event.type === "sessions" ||
+    event.type === "usage_reference"
+  );
 }
 
 class ProviderRuntime {
@@ -128,6 +147,10 @@ class ProviderRuntime {
 
   get negotiatedCapabilities(): readonly string[] {
     return this.connection?.capabilities ?? [];
+  }
+
+  get isClosed(): boolean {
+    return this.closed;
   }
 
   async isAvailable(): Promise<boolean> {
@@ -348,11 +371,7 @@ class ProviderRuntime {
       this.failRequest(event);
       return;
     }
-    if (
-      event.type === "request.completed" ||
-      event.type === "catalog" ||
-      event.type === "sessions"
-    ) {
+    if (isProviderRequestReply(event)) {
       this.finishRequest(event);
       return;
     }
@@ -507,7 +526,10 @@ class ProviderRuntime {
   }
 
   private finishRequest(
-    event: Extract<ProviderEvent, { type: "request.completed" | "catalog" | "sessions" }>,
+    event: Extract<
+      ProviderEvent,
+      { type: "request.completed" | "catalog" | "sessions" | "usage_reference" }
+    >,
   ): void {
     const request = this.requests.get(event.requestId);
     if (!request) return;
@@ -525,6 +547,7 @@ class ProviderRuntimeSession {
     string,
     Deferred<Extract<ProviderEvent, { type: "session.prompt_result" }>>
   >();
+  private readonly activeTurnIds = new Set<string>();
   private terminal = false;
   config: ProviderConfigState = { models: [], modes: [], thinkingOptions: [], settings: [] };
   commands: Array<{ name: string; description: string; argumentHint?: string }> = [];
@@ -546,6 +569,17 @@ class ProviderRuntimeSession {
     return this.capabilities;
   }
 
+  async getUsageReference(): Promise<UsageReference | null> {
+    if (!this.capabilities.includes("session.usage_reference")) return null;
+    const event = await this.runtime.complete({
+      type: "session.usage_reference",
+      requestId: randomUUID(),
+      sessionId: this.providerSessionId,
+    });
+    if (event.type !== "usage_reference") throw new Error("Invalid usage reference response");
+    return event.reference;
+  }
+
   onEvent(listener: (event: ProviderEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -559,6 +593,7 @@ class ProviderRuntimeSession {
       sessionId: this.providerSessionId,
       prompt,
     });
+    if (this.terminal) throw new StaleProviderSessionError(this.id);
     const pending = deferred<Extract<ProviderEvent, { type: "session.prompt_result" }>>();
     this.prompts.set(prompt.clientMessageId, pending);
     try {
@@ -568,6 +603,9 @@ class ProviderRuntimeSession {
         prompt,
       });
       return (await pending.promise).result;
+    } catch (error) {
+      if (this.terminal || this.runtime.isClosed) throw new StaleProviderSessionError(this.id);
+      throw error;
     } finally {
       this.prompts.delete(prompt.clientMessageId);
     }
@@ -623,6 +661,8 @@ class ProviderRuntimeSession {
         requestId: randomUUID(),
         sessionId: this.providerSessionId,
       });
+    } catch (error) {
+      if (!this.runtime.isClosed) throw error;
     } finally {
       this.runtime.removeSession(this.id, this.providerSessionId);
     }
@@ -663,6 +703,7 @@ class ProviderRuntimeSession {
       return;
     }
     if (event.type === "session.prompt_result") {
+      if (event.result.type === "turn") this.activeTurnIds.add(event.result.turnId);
       this.prompts.get(event.clientMessageId)?.resolve(event);
       return;
     }
@@ -681,14 +722,16 @@ class ProviderRuntimeSession {
   }
 
   connectionClosed(error = new Error("Provider connection closed")): void {
-    if (!this.terminal) {
-      this.terminal = true;
+    // Closing fails only an interrupted turn. An idle session goes stale, and its next prompt
+    // reopens it from persistence.
+    if (!this.terminal && this.activeTurnIds.size > 0) {
       this.publish({
         type: "session.runtime_failed",
         sessionId: this.id,
         error: { message: error.message },
       });
     }
+    this.terminal = true;
     this.rejectPending(error);
   }
 
@@ -712,6 +755,10 @@ class ProviderRuntimeSession {
   }
 
   private publish(event: ProviderEvent): void {
+    if (event.type === "session.turn") {
+      if (event.state === "started") this.activeTurnIds.add(event.turnId);
+      else this.activeTurnIds.delete(event.turnId);
+    }
     if (event.type === "session.config") this.config = event.config;
     if (event.type === "session.commands") this.commands = [...event.commands];
     if (event.type === "session.persistence" && this.restoration === "core") {
@@ -837,7 +884,10 @@ class PluginAgentClient implements AgentClient {
   private readonly rootsBySession = new Map<string, PluginAgentSession>();
   private readonly pendingChildren: PendingChild[] = [];
 
+  readonly getCatalogCacheKey?: AgentClient["getCatalogCacheKey"];
+
   constructor(registration: ProviderRegistration) {
+    this.getCatalogCacheKey = registration.getCatalogCacheKey?.bind(registration);
     this.provider = registration.id;
     this.runtime = new ProviderRuntime(registration);
     this.runtime.onSessionOpened((session, opened) => this.acceptChild(session, opened));
@@ -1021,6 +1071,7 @@ class PluginAgentSession implements AgentSession {
   private readonly permissionResponses = new Map<string, AgentPermissionResponse>();
   private readonly revertTokens = new Map<string, ProviderTimelineItem["revertToken"]>();
   private readonly timelineSnapshots = new Map<string, ProviderTimelineItem>();
+  private readonly subagentIdsBySession = new Map<string, string | null>();
   private readonly childUnsubscribes = new Map<string, () => void>();
   private readonly childSnapshots = new Map<string, Map<string, ProviderTimelineItem>>();
   private unsubscribe: (() => void) | null = null;
@@ -1032,6 +1083,7 @@ class PluginAgentSession implements AgentSession {
     private readonly bridge: ProviderRuntimeSession,
     private readonly onClose: () => void,
   ) {
+    this.subagentIdsBySession.set(bridge.id, null);
     for (const event of bridge.history) this.accept(event, false);
     this.unsubscribe = bridge.onEvent((event) => this.accept(event, true));
   }
@@ -1042,6 +1094,10 @@ class PluginAgentSession implements AgentSession {
 
   get capabilities(): AgentCapabilityFlags {
     return agentCapabilities(this.bridge.negotiatedCapabilities);
+  }
+
+  getUsageReference(): Promise<UsageReference | null> {
+    return this.bridge.getUsageReference();
   }
 
   get features(): AgentFeature[] {
@@ -1173,6 +1229,7 @@ class PluginAgentSession implements AgentSession {
     this.unsubscribe = null;
     for (const unsubscribe of this.childUnsubscribes.values()) unsubscribe();
     this.childUnsubscribes.clear();
+    this.subagentIdsBySession.clear();
     this.listeners.clear();
     this.onClose();
     await this.bridge.close();
@@ -1229,13 +1286,22 @@ class PluginAgentSession implements AgentSession {
     child: ProviderRuntimeSession,
     opened: Extract<ProviderEvent, { type: "session.opened" }>,
   ): void {
+    const parentSubagentId = opened.parentSessionId
+      ? this.subagentIdsBySession.get(opened.parentSessionId)
+      : undefined;
+    if (parentSubagentId === undefined) {
+      throw new Error(`Missing plugin child parent ${opened.parentSessionId}`);
+    }
     const childId = child.providerId;
+    this.subagentIdsBySession.set(child.id, childId);
     this.publish({
       type: "provider_subagent",
       provider: this.provider,
       event: {
         type: "upsert",
         id: childId,
+        parentSubagentId,
+        toolCallId: opened.toolCallId ?? null,
         title: opened.title ?? null,
         description: opened.description ?? null,
         status: "running",

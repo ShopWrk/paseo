@@ -1,12 +1,18 @@
 import * as React from "react";
 import {
   ArrowRight,
+  Blocks,
   Bot,
   BookOpen,
   Braces,
+  Coffee,
+  Compass,
   ExternalLink,
+  Gem,
   GitFork,
   Laptop,
+  Lock,
+  Merge,
   Monitor,
   Puzzle,
   Smartphone,
@@ -77,6 +83,7 @@ import { DiscordIcon, GitHubIcon, SlackIcon } from "~/components/brand-icons";
 import { ClaudeIcon, MobileChat, MobileDiff, MobileSidebar, PhoneFrame } from "~/components/mockup";
 import { FAQItem } from "~/components/faq-item";
 import { SiteFooter } from "~/components/site-footer";
+import { SponsorSection, SponsorsSection } from "~/components/sponsorship";
 import { SiteHeader } from "~/components/site-header";
 import "~/styles.css";
 
@@ -122,7 +129,9 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
             <AutomationSection />
             <ExtensibleSection />
             <FAQ />
-            <SponsorCTA />
+            <PhilosophySection />
+            <SponsorSection />
+            <SponsorsSection />
           </div>
         </main>
         <SiteFooter />
@@ -790,40 +799,58 @@ function ExtensibleSection() {
           icon={Puzzle}
           title="Plugins"
           description="Plugins can add server-side functionality and modify the client with custom components. They work across all clients, including mobile"
-          href="/docs/plugins"
-          linkLabel="Plugin documentation"
-          linkIcon="book"
+          links={PLUGIN_CARD_LINKS}
         />
         <ExtensibleCard
           icon={GitFork}
           title="Fork the repo"
           description="Paseo is licensed under Apache 2.0. You can inspect the implementation, fork the project, and adapt it to your workflow or organization"
-          href="https://github.com/getpaseo/paseo"
-          linkLabel="View the repository"
-          linkIcon="github"
-          external
+          links={FORK_CARD_LINKS}
         />
       </div>
     </FeatureSection>
   );
 }
 
+interface ExtensibleCardLink {
+  href: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  external?: boolean;
+  /** Accent links stand out without hover, for destinations worth noticing. */
+  accent?: boolean;
+}
+
+const PLUGIN_CARD_LINKS: ReadonlyArray<ExtensibleCardLink> = [
+  { href: "/docs/plugins", label: "Plugin documentation", icon: BookOpen },
+  {
+    href: "https://paseo.cafe",
+    label: "Community plugins",
+    icon: Coffee,
+    external: true,
+    accent: true,
+  },
+];
+
+const FORK_CARD_LINKS: ReadonlyArray<ExtensibleCardLink> = [
+  {
+    href: "https://github.com/getpaseo/paseo",
+    label: "View the repository",
+    icon: GitHubIcon,
+    external: true,
+  },
+];
+
 function ExtensibleCard({
   icon: Icon,
   title,
   description,
-  href,
-  linkLabel,
-  linkIcon,
-  external = false,
+  links,
 }: {
   icon: LucideIcon;
   title: string;
   description: string;
-  href: string;
-  linkLabel: string;
-  linkIcon?: "book" | "github";
-  external?: boolean;
+  links: ReadonlyArray<ExtensibleCardLink>;
 }) {
   return (
     <div className="flex min-h-64 flex-col rounded-xl border border-white/10 bg-white/[0.025] p-6">
@@ -832,16 +859,82 @@ function ExtensibleCard({
       </div>
       <h3 className="text-lg font-medium text-white/85">{title}</h3>
       <p className="mt-2 text-sm leading-relaxed text-white/45">{description}</p>
-      <a
-        href={href}
-        {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-        className="mt-auto inline-flex items-center gap-2 pt-6 text-sm text-muted-foreground transition-colors hover:text-foreground"
-      >
-        {linkIcon === "book" ? <BookOpen className="h-4 w-4" /> : null}
-        {linkIcon === "github" ? <GitHubIcon className="h-4 w-4" /> : null}
-        {linkLabel}
-      </a>
+      <div className="mt-auto flex flex-col items-start gap-3 pt-6">
+        {links.map((link) => (
+          <a
+            key={link.href}
+            href={link.href}
+            {...(link.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+            className={
+              link.accent
+                ? "inline-flex items-center gap-2 text-sm text-emerald-300/85 transition-colors hover:text-emerald-200"
+                : "inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+            }
+          >
+            <link.icon className="h-4 w-4" />
+            {link.label}
+            {link.external ? <ExternalLink className="h-3.5 w-3.5 opacity-70" /> : null}
+          </a>
+        ))}
+      </div>
     </div>
+  );
+}
+
+const PRINCIPLES: ReadonlyArray<{ icon: LucideIcon; title: string; description: string }> = [
+  {
+    icon: Lock,
+    title: "Private",
+    description: "No telemetry, tracking, or forced login. Code stays on your machine.",
+  },
+  {
+    icon: Compass,
+    title: "Independent",
+    description: "Paseo doesn't answer to investors. Its users guide what gets built.",
+  },
+  {
+    icon: Gem,
+    title: "Polished",
+    description: "Install the app and start working. No need to know what a daemon is.",
+  },
+  {
+    icon: Merge,
+    title: "Unified",
+    description: "Claude Code, Codex, OpenCode, Pi, and more, all used the same way.",
+  },
+  {
+    icon: Blocks,
+    title: "Composable",
+    description: "Run agents on your laptop or a server, and connect from any device.",
+  },
+  {
+    icon: Puzzle,
+    title: "Extensible",
+    description: "If Paseo doesn't fit how you work, change it with a plugin or fork.",
+  },
+];
+
+function PhilosophySection() {
+  return (
+    <FeatureSection
+      title="Philosophy"
+      description="What Paseo stands for, and what every feature is built on"
+    >
+      <div className="grid gap-4 md:grid-cols-2">
+        {PRINCIPLES.map((principle) => (
+          <div
+            key={principle.title}
+            className="rounded-xl border border-white/10 bg-white/[0.025] p-6"
+          >
+            <div className="mb-8 text-extra-muted-foreground">
+              <principle.icon className="h-6 w-6" strokeWidth={1.5} />
+            </div>
+            <h3 className="text-lg font-medium text-white/85">{principle.title}</h3>
+            <p className="mt-2 text-sm leading-relaxed text-white/45">{principle.description}</p>
+          </div>
+        ))}
+      </div>
+    </FeatureSection>
   );
 }
 
@@ -1164,48 +1257,6 @@ function FAQ() {
           </a>
           .
         </FAQItem>
-      </div>
-    </motion.div>
-  );
-}
-
-function SponsorCTA() {
-  return (
-    <motion.div
-      initial={FADE_IN_UP}
-      whileInView={FADE_IN}
-      viewport={VIEWPORT_60}
-      transition={EASE_OUT_05}
-      className="rounded-xl bg-white/5 border border-white/10 p-8 md:p-10 text-left space-y-4 max-w-xl mx-auto"
-    >
-      <div className="text-sm text-muted-foreground leading-relaxed space-y-3">
-        <p>Paseo is an independent open source project for running coding agents.</p>
-        <p>Its guiding principle is optionality and freedom of choice.</p>
-        <p>
-          I wanted to use any provider without being locked into any ecosystem, run it on my own
-          infrastructure, access it from anywhere, and have it be fully automatable.
-        </p>
-        <p>I am hoping that you will enjoy Paseo as much as I do.</p>
-        <p>If you like Paseo, sponsorship is the best way to support continued development.</p>
-        <p>- Mo</p>
-      </div>
-      <div className="pt-2">
-        <a
-          href="/sponsor"
-          className="inline-flex items-center gap-2 rounded-lg bg-white/10 border border-white/20 px-5 py-2.5 text-sm font-medium text-white hover:bg-white/15 transition-colors"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            className="text-pink-400"
-          >
-            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-          </svg>
-          Sponsor Paseo
-        </a>
       </div>
     </motion.div>
   );

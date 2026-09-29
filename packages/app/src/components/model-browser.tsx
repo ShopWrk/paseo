@@ -13,7 +13,10 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import { BottomSheetFlatList, BottomSheetScrollView } from "@gorhom/bottom-sheet";
+import {
+  FlatList as SheetFlatList,
+  ScrollView as SheetScrollView,
+} from "@/components/ui/scroll-view";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
@@ -216,7 +219,7 @@ export function ModelProviderGlyph({
   tone = "muted",
 }: {
   provider: string;
-  serverId?: string | null;
+  serverId: string | null;
   size: number;
   tone?: ProviderGlyphTone;
 }) {
@@ -622,13 +625,6 @@ function ModelRowProfileAction({
 }) {
   const isCompact = useIsCompactFormFactor();
   const visible = hovered || isNative || isCompact;
-  const handlePress = useCallback(
-    (event: GestureResponderEvent) => {
-      event.stopPropagation();
-      onPress();
-    },
-    [onPress],
-  );
   const pressableStyle = useCallback(
     ({ hovered: buttonHovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.rowIconButton,
@@ -642,7 +638,7 @@ function ModelRowProfileAction({
     <Tooltip delayDuration={250} enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger asChild>
         <Pressable
-          onPress={handlePress}
+          onPress={onPress}
           hitSlop={8}
           style={pressableStyle}
           pointerEvents={visible ? "auto" : "none"}
@@ -775,7 +771,6 @@ function ModelRow({
   const pressableStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.browserRow,
-      styles.browserModelRow,
       Boolean(hovered) && styles.browserRowHovered,
       pressed && styles.browserRowPressed,
     ],
@@ -784,7 +779,7 @@ function ModelRow({
 
   return (
     <View
-      style={styles.modelRowHoverBoundary}
+      style={[styles.modelRowHoverBoundary, styles.browserModelRow]}
       onPointerEnter={handlePointerEnter}
       onPointerLeave={handlePointerLeave}
     >
@@ -812,10 +807,17 @@ function ModelRow({
                 <ThemedCheck size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
               ) : null}
             </View>
-            {profileAction}
+            {profileAction ? <View style={styles.rowIconButton} /> : null}
           </View>
         </View>
       </ModelBrowserPressable>
+      {/* The row renders a <button> on web, so its profile action sits beside it,
+          over the slot reserved above, rather than inside it. */}
+      {profileAction ? (
+        <View style={styles.modelRowProfileActionSlot} pointerEvents="box-none">
+          {profileAction}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -1190,7 +1192,7 @@ function ModelRowList({
 
   if (isCompact && isNative) {
     return (
-      <BottomSheetFlatList
+      <SheetFlatList
         data={rows}
         renderItem={renderItem}
         ListHeaderComponent={header}
@@ -1488,7 +1490,7 @@ function ModelBrowserContent({
   return scrolling === "independent" ? (
     <IndependentProviderList>{allProvidersContent}</IndependentProviderList>
   ) : (
-    <BottomSheetScrollView
+    <SheetScrollView
       style={styles.virtualizedModelList}
       contentContainerStyle={[
         styles.virtualizedModelListContent,
@@ -1500,7 +1502,7 @@ function ModelBrowserContent({
       testID="compact-provider-list"
     >
       {allProvidersContent}
-    </BottomSheetScrollView>
+    </SheetScrollView>
   );
 }
 
@@ -1586,6 +1588,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   modelRowHoverBoundary: {
     position: "relative",
+  },
+  modelRowProfileActionSlot: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    right: isWeb ? theme.spacing[3] : theme.spacing[6],
+    justifyContent: "center",
   },
   browserModelRow: isWeb ? {} : { marginBottom: theme.spacing[1] },
   browserRowHovered: {

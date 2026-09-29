@@ -643,10 +643,13 @@ export interface AgentCreateSessionOptions {
   persistSession?: boolean;
 }
 
+/** What a resumed session is for: driving the agent, or reading what it already did. */
+export type AgentResumePurpose = "interactive" | "history";
+
 /** Runtime-only intent for a persisted-session resume. Never persist this option. */
 export interface AgentResumeSessionOptions {
   /** Defaults to interactive. History loading may be read-only for archived native sessions. */
-  purpose?: "interactive" | "history";
+  purpose?: AgentResumePurpose;
 }
 
 /**
@@ -657,11 +660,21 @@ export interface AgentPermissionResult {
   followUpPrompt?: AgentPromptInput;
 }
 
+export interface UsageReference {
+  source: string;
+  input: JsonValue;
+}
+
 export interface AgentSession {
   readonly provider: AgentProvider;
   readonly id: string | null;
   readonly capabilities: AgentCapabilityFlags;
   readonly features?: AgentFeature[];
+  /** New provider-owned rows to commit on registration. streamHistory must also
+   * replay them at their original timestamps; restored sessions omit old rows. */
+  readonly initialTimeline?: ImportedTimelineEntry[];
+  /** Resolved at fetch time because model and credentials may change during a session. */
+  getUsageReference?(): Promise<UsageReference | null>;
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
   steerActiveTurn?(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult>;
@@ -748,6 +761,10 @@ export interface AgentClient {
     launchContext?: AgentLaunchContext,
     options?: AgentResumeSessionOptions,
   ): Promise<AgentSession>;
+  /** Equal keys share availability and catalogue discovery within this configured client.
+   * Include the execution environment and effective configuration; omit to use target identity.
+   * force must not affect identity. Resolve before every cache lookup. */
+  getCatalogCacheKey?(options: FetchCatalogOptions): Promise<string | undefined>;
   /**
    * Discover models and modes together. Implementations may use one upstream
    * process, separate upstream calls, static modes, or private helpers; callers
@@ -775,10 +792,10 @@ export interface AgentClient {
     context: ImportProviderSessionContext,
   ): Promise<ImportedProviderSession>;
   /**
-   * Check if this provider is available (CLI binary is installed).
+   * Check availability in the catalogue target when supplied (CLI binary is installed).
    * Returns true if available, false otherwise.
    */
-  isAvailable(signal?: AbortSignal): Promise<boolean>;
+  isAvailable(signal?: AbortSignal, options?: FetchCatalogOptions): Promise<boolean>;
   getDiagnostic?(): Promise<{ diagnostic: string }>;
   /**
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().

@@ -2,6 +2,30 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
+  paneFind: {
+    connectionFailure:
+      "Impossible de rechercher dans cette conversation. Vérifiez la connexion à l’hôte et réessayez.",
+    historyChangedFailure: "La conversation a changé pendant la recherche. Relancez la recherche.",
+    revealFailure: "Impossible d’afficher ce résultat. Réessayez.",
+    searching: "Recherche…",
+    loading: "Chargement…",
+    failed: "Échec",
+    retry: "Réessayer",
+
+    title: "Rechercher",
+    placeholder: "Rechercher dans le panneau",
+    close: "Fermer la recherche",
+    matches: "Résultats de recherche",
+    previous: "Résultat précédent",
+    next: "Résultat suivant",
+    toggleReplace: "Afficher le remplacement",
+    replaceWith: "Remplacer par",
+    replace: "Remplacer",
+    replaceAll: "Tout remplacer",
+    noMatches: "Aucun résultat",
+    position: "{{current}} sur {{total}}",
+    total: "{{total}} résultats",
+  },
   common: {
     back: "Dos",
     loading: "Chargement...",
@@ -12,6 +36,7 @@ export const fr: TranslationResources = {
       copy: "Copie",
       copyLine: "Copier la ligne",
       dismiss: "Rejeter",
+      reload: "Recharger",
       retry: "Réessayer",
       search: "Recherche",
       select: "Sélectionner",
@@ -155,7 +180,8 @@ export const fr: TranslationResources = {
       initialPromptRequired: "Une invite initiale est requise",
       alreadyLoading: "Déjà en cours de chargement",
       uploadFailed: "Failed to upload file",
-      noClipboardImage: "Aucune image dans le presse-papiers",
+      noClipboardImage:
+        "Aucune image dans le presse-papiers actuel. Essayez de coller depuis votre clavier.",
       pasteImageFailed: "Impossible de coller l’image",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
@@ -210,6 +236,10 @@ export const fr: TranslationResources = {
     historyLoadFailed: "Impossible de charger l’historique de l’agent",
     messageCapped: "Ce message a été tronqué ({{bytes}} octets).",
     permission: {
+      rejectedPlan: "Plan refusé",
+      approvedPlan: "Plan approuvé",
+      canceledPlan: "Plan annulé",
+
       plan: "Plan",
       required: "Autorisation requise",
       deny: "Refuser",
@@ -223,7 +253,8 @@ export const fr: TranslationResources = {
     states: {
       notFound: "Agentintrouvable",
       failedToLoad: "Échec du chargement de l'agent",
-      reconnecting: "Reconnexion",
+      reconnecting: "Reconnexion à l’hôte",
+      updating: "Mise à jour des messages",
       timelineSyncFailed: "Impossible d’actualiser l’historique de l’agent.",
       timelineSyncRetrying: "Nouvelle tentative…",
       archivingTitle: "Agent d'archivage...",
@@ -909,6 +940,9 @@ export const fr: TranslationResources = {
         openChangesTab: "Ouvrir l'onglet Modifications",
         openDiffTab: "Ouvrir l'onglet Diff",
         closeChangesTab: "Fermer l'onglet Modifications",
+        jumpToFile: {
+          title: "Aller au fichier",
+        },
         binaryFile: "Fichier binaire",
         tooLarge: "Diff trop grand pour être affiché",
         previewTooLargeTitle: "Ce diff est trop volumineux pour être prévisualisé",
@@ -931,11 +965,8 @@ export const fr: TranslationResources = {
         refresh: "Rafraîchir",
         refreshState: "Actualiser l'état de git et de {{brand}}",
         failedRefresh: "Échec de l'actualisation de l'état git.",
-        emptyHiddenWhitespace: "Aucun changement visible après avoir masqué les espaces",
-        emptyUncommitted: "Aucune modification non validée",
         seeUncommittedChanges: "Voir les modifications non validées",
         seeCommittedChanges: "Voir les modifications validées",
-        emptyAgainstBase: "Aucun changement par rapport à{{baseRef}}",
         checkingRepository: "Vérification du référentiel...",
         notRepository: "Pas un dépôt git",
         diffMode: "Mode différentiel",
@@ -1076,6 +1107,16 @@ export const fr: TranslationResources = {
       deleteMessage_other: "Cela retire l’étiquette de {{count}} espaces de travail sur cet hôte.",
       offline: "Cet hôte est hors ligne.",
       updateHost: "Mettez à jour cet hôte pour gérer les étiquettes.",
+    },
+  },
+  changelog: {
+    title: "Nouveautés",
+    installed: "Installée",
+    showMore: "Afficher plus",
+    openWebsite: "Journal des modifications complet",
+    error: {
+      title: "Impossible de charger le journal des modifications",
+      description: "Vérifiez votre connexion et réessayez.",
     },
   },
   sidebar: {
@@ -1300,6 +1341,7 @@ export const fr: TranslationResources = {
       detail: "Arrêt du démon local.",
     },
     daemon: {
+      lifecycle: en.desktop.daemon.lifecycle,
       title: "Daemon",
       status: {
         title: "Statut",
@@ -1530,6 +1572,8 @@ export const fr: TranslationResources = {
     noFiles: "Aucun fichier ou répertoire trouvé",
     noCommands: "Aucune commande trouvée",
     failedToLoad: "Échec du chargement",
+    chooseProjectForCommands: "Choisissez un projet pour voir les commandes",
+    chooseModelForCommands: "Sélectionnez un modèle pour voir les commandes",
   },
   loadOlderHistory: {
     failed: "Impossible de charger l'ancien historique",
@@ -1621,6 +1665,10 @@ export const fr: TranslationResources = {
     },
   },
   pairing: {
+    hostPassword: {
+      title: "Mot de passe pour {{host}}",
+      label: "Mot de passe de l’hôte",
+    },
     connectionMethods: {
       title: "Ajouter une connexion",
       direct: {
@@ -1960,8 +2008,11 @@ export const fr: TranslationResources = {
     groupInfo: "À propos de{{title}}",
     sections: {
       general: "Général",
+      chat: "Discussion",
       appearance: "Apparence",
-      layout: en.settings.sections.layout,
+      sidebar: "Barre latérale",
+      terminal: "Terminal",
+      browser: "Navigateur",
       editor: "Éditeur",
       shortcuts: "Raccourcis",
       integrations: "Intégrations",
@@ -2020,6 +2071,7 @@ export const fr: TranslationResources = {
     },
     general: {
       title: "Général",
+      sending: "Envoi",
       browserData: {
         title: "Données du navigateur",
         siteData: "Cookies et données des sites",
@@ -2049,8 +2101,6 @@ export const fr: TranslationResources = {
         },
       },
       serviceUrls: {
-        label: "URL de services",
-        description: "Où ouvrir les URL à partir de scripts en cours d'exécution",
         options: {
           ask: "Demander",
           inApp: "DansPaseo",
@@ -2069,7 +2119,6 @@ export const fr: TranslationResources = {
       toolCallDetail: {
         label: "Affichage des appels d’outils",
         description: "Comment les appels d’outils apparaissent dans la chronologie",
-        accessibilityLabel: "Sélectionner l’affichage des appels d’outils ({{value}})",
         options: {
           overview: "Résumé",
           detailed: "Détails complets",
@@ -2123,6 +2172,7 @@ export const fr: TranslationResources = {
     about: {
       title: "À propos",
       appVersion: "Version de l'application",
+      whatsNewHint: "Notes de version pour chaque release",
       thisDevice: "Cet appareil",
       connectedHosts: "Hôtes connectés",
       offline: "Hors ligne",
@@ -2197,6 +2247,14 @@ export const fr: TranslationResources = {
         codeSize: "Taille du code",
         codeSizeHint: "Utilisée pour le code, les diffs et la sortie du terminal",
         codeSizeAccessibility: "Taille de la police du code",
+      },
+      layout: {
+        title: "Mise en page",
+        contentWidth: "Largeur du contenu",
+        contentWidthHint: "Largeur maximale du chat et des fichiers Markdown sur les grands écrans",
+        contentWidthAccessibility: "Largeur du contenu en pixels",
+        reset: "Réinitialiser",
+        resetAccessibility: "Réinitialiser la largeur du contenu",
       },
       syntax: {
         title: "Syntaxe",
@@ -2309,6 +2367,10 @@ export const fr: TranslationResources = {
       },
     },
     host: {
+      password: {
+        guidance:
+          "Supprimez cet hôte puis ajoutez-le à nouveau avec le mot de passe demandé par ce daemon.",
+      },
       appearance: {
         title: "Apparence",
         name: {
