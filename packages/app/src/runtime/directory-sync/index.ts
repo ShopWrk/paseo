@@ -189,6 +189,9 @@ export class DirectorySync {
     }
     this.flushAbortedTransactions();
     this.releaseSubscriptions();
+    // Retained records remain available offline, but ownership belongs to the
+    // previous connection until an agent snapshot is committed again.
+    useSessionStore.getState().setHasHydratedAgents(this.serverId, false);
     workspaceLabels.disconnect(this.serverId);
     this.connection = connection;
     this.abortPendingSessionWaits();

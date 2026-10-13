@@ -46,6 +46,7 @@ import {
 } from "@/utils/workspace-identity";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
+import { selectAgentNavTarget } from "@/utils/navigate-to-agent/resolve";
 import { isNative, isWeb } from "@/constants/platform";
 import { RenderProfile } from "@/utils/render-profiler";
 
@@ -98,7 +99,7 @@ function clearConsumedOpenIntent(input: {
 }
 
 // A deep link's workspaceId can be stale (e.g. a notification sent before the
-// agent moved workspaces). When the store already knows where the agent lives
+// agent moved workspaces). When the refreshed directory knows where the agent lives
 // and it is a different existing workspace, land there instead of pinning the
 // tab into the wrong one.
 function resolveLiveAgentWorkspaceRoute(input: {
@@ -154,6 +155,9 @@ function HostWorkspaceRouteContent() {
     : "";
   const openValue = getParamValue(globalParams.open);
   const hasHydratedWorkspaces = useHasHydratedWorkspaces(serverId);
+  const hasHydratedAgents = useSessionStore(
+    (state) => state.sessions[serverId]?.hasHydratedAgents ?? false,
+  );
   const workspaceExists = useWorkspaceExists(serverId, workspaceId);
   const openIntent = useMemo(() => parseWorkspaceOpenIntent(openValue), [openValue]);
   const isAgentOpenIntent = openIntent?.kind === "agent";
@@ -162,13 +166,12 @@ function HostWorkspaceRouteContent() {
   const liveAgentWorkspaceId = useSessionStore((s) => {
     if (openIntent?.kind !== "agent") return null;
     const session = s.sessions[serverId];
-    const agent =
-      session?.agents.get(openIntent.agentId) ?? session?.agentDetails.get(openIntent.agentId);
-    return normalizeWorkspaceOpaqueId(agent?.workspaceId);
+    const target = selectAgentNavTarget({ session, agentId: openIntent.agentId });
+    return target.isCurrent ? normalizeWorkspaceOpaqueId(target.agentWorkspaceId) : null;
   });
   const sessionWorkspaces = useSessionStore((s) => s.sessions[serverId]?.workspaces);
   const isOpenIntentWaitingForWorkspace = Boolean(
-    isAgentOpenIntent && (!hasHydratedWorkspaces || !workspaceExists),
+    isAgentOpenIntent && (!hasHydratedWorkspaces || !hasHydratedAgents || !workspaceExists),
   );
   useEffect(() => {
     if (!serverId || !workspaceId) {
