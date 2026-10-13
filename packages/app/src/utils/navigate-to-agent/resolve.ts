@@ -18,12 +18,12 @@ export interface AgentNavTarget {
 }
 
 export function selectAgentNavTarget(input: {
-  session: Pick<SessionState, "agents" | "agentDetails" | "hasHydratedAgents"> | undefined;
+  session: Pick<SessionState, "agents" | "agentDetails" | "hasCurrentAgentDirectory"> | undefined;
   agentId: string;
 }): AgentNavTarget {
   const directoryAgent = input.session?.agents.get(input.agentId);
   const agent = directoryAgent ?? input.session?.agentDetails.get(input.agentId);
-  const isCurrent = Boolean(input.session?.hasHydratedAgents && directoryAgent);
+  const isCurrent = Boolean(input.session?.hasCurrentAgentDirectory && directoryAgent);
   return { agentWorkspaceId: agent?.workspaceId, isCurrent };
 }
 

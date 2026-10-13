@@ -31,7 +31,6 @@ import {
   shouldKeepWorkspaceDeckEntryMounted,
 } from "@/screens/workspace/workspace-deck-retention";
 import {
-  buildHostWorkspaceOpenRoute,
   decodeWorkspaceIdFromPathSegment,
   parseWorkspaceOpenIntent,
   type WorkspaceOpenIntent,
@@ -40,13 +39,12 @@ import {
   replaceBrowserRouteWithCanonicalHostWorkspaceRoute,
   stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit,
 } from "@/utils/host-route-browser";
-import {
-  normalizeWorkspaceOpaqueId,
-  resolveWorkspaceMapKeyByIdentity,
-} from "@/utils/workspace-identity";
+import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
-import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
+import { useSessionStore } from "@/stores/session-store";
 import { selectAgentNavTarget } from "@/utils/navigate-to-agent/resolve";
+import { resolveWorkspaceAgentOpen } from "@/navigation/workspace-agent-open";
+import { getHostRuntimeStore, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { isNative, isWeb } from "@/constants/platform";
 import { RenderProfile } from "@/utils/render-profiler";
 
@@ -98,35 +96,6 @@ function clearConsumedOpenIntent(input: {
   }
 }
 
-// A deep link's workspaceId can be stale (e.g. a notification sent before the
-// agent moved workspaces). When the refreshed directory knows where the agent lives
-// and it is a different existing workspace, land there instead of pinning the
-// tab into the wrong one.
-function resolveLiveAgentWorkspaceRoute(input: {
-  serverId: string;
-  workspaceId: string;
-  liveWorkspaceId: string | null;
-  workspaces: Map<string, WorkspaceDescriptor> | null | undefined;
-  openValue: string;
-}): Href | null {
-  if (!input.liveWorkspaceId) {
-    return null;
-  }
-  const liveWorkspaceKey = resolveWorkspaceMapKeyByIdentity({
-    workspaces: input.workspaces,
-    workspaceId: input.liveWorkspaceId,
-  });
-  const routeWorkspaceKey = resolveWorkspaceMapKeyByIdentity({
-    workspaces: input.workspaces,
-    workspaceId: input.workspaceId,
-  });
-  if (!liveWorkspaceKey || liveWorkspaceKey === routeWorkspaceKey) {
-    return null;
-  }
-  const route = buildHostWorkspaceOpenRoute(input.serverId, liveWorkspaceKey, input.openValue);
-  return route === "/" ? null : (route as Href);
-}
-
 export default function HostWorkspaceIndexRoute() {
   return (
     <HostRouteBootstrapBoundary>
@@ -139,8 +108,8 @@ function HostWorkspaceRouteContent() {
   const navigation = useNavigation();
   const rootNavigationState = useRootNavigationState();
   const hasHydratedWorkspaceLayoutStore = useWorkspaceLayoutStoreHydrated();
-  const consumedIntentRef = useRef<string | null>(null);
-  const [intentConsumed, setIntentConsumed] = useState(false);
+  const openedIntentRef = useRef<string | null>(null);
+  const [intentOpened, setIntentOpened] = useState(false);
   const params = useLocalSearchParams<{
     serverId?: string | string[];
     workspaceId?: string | string[];
@@ -155,10 +124,10 @@ function HostWorkspaceRouteContent() {
     : "";
   const openValue = getParamValue(globalParams.open);
   const hasHydratedWorkspaces = useHasHydratedWorkspaces(serverId);
-  const hasHydratedAgents = useSessionStore(
-    (state) => state.sessions[serverId]?.hasHydratedAgents ?? false,
+  const hasCurrentAgentDirectory = useSessionStore(
+    (state) => state.sessions[serverId]?.hasCurrentAgentDirectory ?? false,
   );
-  const workspaceExists = useWorkspaceExists(serverId, workspaceId);
+  const isConnected = useHostRuntimeIsConnected(serverId);
   const openIntent = useMemo(() => parseWorkspaceOpenIntent(openValue), [openValue]);
   const isAgentOpenIntent = openIntent?.kind === "agent";
   // Subscribed (not getState) so an agent record landing after workspace
@@ -170,9 +139,39 @@ function HostWorkspaceRouteContent() {
     return target.isCurrent ? normalizeWorkspaceOpaqueId(target.agentWorkspaceId) : null;
   });
   const sessionWorkspaces = useSessionStore((s) => s.sessions[serverId]?.workspaces);
-  const isOpenIntentWaitingForWorkspace = Boolean(
-    isAgentOpenIntent && (!hasHydratedWorkspaces || !hasHydratedAgents || !workspaceExists),
-  );
+  const agentOpenResolution = useMemo(() => {
+    if (!isAgentOpenIntent) return null;
+    return resolveWorkspaceAgentOpen({
+      serverId,
+      workspaceId,
+      openValue,
+      agentTarget: {
+        agentWorkspaceId: liveAgentWorkspaceId,
+        isCurrent: liveAgentWorkspaceId !== null,
+      },
+      isConnected,
+      hasCurrentAgentDirectory,
+      hasHydratedWorkspaces,
+      workspaces: sessionWorkspaces,
+    });
+  }, [
+    hasCurrentAgentDirectory,
+    hasHydratedWorkspaces,
+    isAgentOpenIntent,
+    isConnected,
+    liveAgentWorkspaceId,
+    openValue,
+    serverId,
+    sessionWorkspaces,
+    workspaceId,
+  ]);
+  const isOpenIntentWaitingForWorkspace = agentOpenResolution?.kind === "waiting";
+  useEffect(() => {
+    if (!serverId || !isAgentOpenIntent) return;
+    // A closed or filtered sidebar may hold no demand for the target host.
+    return getHostRuntimeStore().acquireDirectoryDemand(serverId);
+  }, [isAgentOpenIntent, serverId]);
+
   useEffect(() => {
     if (!serverId || !workspaceId) {
       return;
@@ -190,36 +189,17 @@ function HostWorkspaceRouteContent() {
     if (!hasHydratedWorkspaceLayoutStore) {
       return;
     }
-    if (isAgentOpenIntent && hasHydratedWorkspaces) {
-      const correctedRoute = resolveLiveAgentWorkspaceRoute({
-        serverId,
-        workspaceId,
-        liveWorkspaceId: liveAgentWorkspaceId,
-        workspaces: sessionWorkspaces,
-        openValue,
-      });
-      if (correctedRoute) {
-        router.replace(correctedRoute);
-        return;
-      }
+    if (agentOpenResolution?.kind === "redirect") {
+      router.replace(agentOpenResolution.route as Href);
+      return;
     }
     if (isOpenIntentWaitingForWorkspace) {
       return;
     }
 
-    const consumptionKey = `${serverId}:${workspaceId}:${openValue}`;
-    if (consumedIntentRef.current === consumptionKey) {
-      clearConsumedOpenIntent({
-        navigation: navigation as unknown as {
-          setParams: (params: { open?: string | undefined }) => void;
-        },
-      });
-      setIntentConsumed(true);
-      return;
-    }
-    consumedIntentRef.current = consumptionKey;
-
-    if (openIntent) {
+    const intentKey = `${serverId}:${workspaceId}:${openValue}`;
+    const hasOpenedIntent = openedIntentRef.current === intentKey;
+    if (!hasOpenedIntent && openIntent) {
       prepareWorkspaceTab({
         serverId,
         workspaceId,
@@ -227,6 +207,10 @@ function HostWorkspaceRouteContent() {
         pin: openIntent.kind === "agent",
       });
     }
+    openedIntentRef.current = intentKey;
+    setIntentOpened(true);
+    // An offline open stays correctable when this host reconnects.
+    if (agentOpenResolution?.kind === "openCached") return;
 
     // Expo Router's replace ignores query-param-only changes (findDivergentState
     // skips search params). Strip ?open from the browser URL directly so the
@@ -236,27 +220,22 @@ function HostWorkspaceRouteContent() {
         setParams: (params: { open?: string | undefined }) => void;
       },
     });
-
-    setIntentConsumed(true);
   }, [
+    agentOpenResolution,
     hasHydratedWorkspaceLayoutStore,
-    hasHydratedWorkspaces,
-    isAgentOpenIntent,
     isOpenIntentWaitingForWorkspace,
-    liveAgentWorkspaceId,
     navigation,
     openIntent,
     openValue,
     rootNavigationState?.key,
     serverId,
-    sessionWorkspaces,
     workspaceId,
   ]);
 
   if (
     openValue &&
     !isOpenIntentWaitingForWorkspace &&
-    (!intentConsumed || !hasHydratedWorkspaceLayoutStore)
+    (!intentOpened || !hasHydratedWorkspaceLayoutStore)
   ) {
     return null;
   }

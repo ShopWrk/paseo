@@ -189,9 +189,6 @@ export class DirectorySync {
     }
     this.flushAbortedTransactions();
     this.releaseSubscriptions();
-    // Retained records remain available offline, but ownership belongs to the
-    // previous connection until an agent snapshot is committed again.
-    useSessionStore.getState().setHasHydratedAgents(this.serverId, false);
     workspaceLabels.disconnect(this.serverId);
     this.connection = connection;
     this.abortPendingSessionWaits();
@@ -250,6 +247,9 @@ export class DirectorySync {
     this.workspaceSubscription = null;
     this.eventSubscription = null;
     this.satisfiedDemandSource = null;
+    // Cached availability survives disconnection; ownership must be verified
+    // again after subscriptions are released or the connection changes.
+    useSessionStore.getState().setHasCurrentAgentDirectory(this.serverId, false);
   }
 
   private receiveAgentDelta(source: DirectorySourceToken, delta: AgentDirectoryDelta): void {
@@ -723,9 +723,12 @@ export class DirectorySync {
     snapshot: AgentSnapshot,
     deltas: readonly AgentDirectoryDelta[],
   ): Map<string, Agent> {
-    return snapshot.syncMode === "changes"
-      ? this.agents.commitChanges(snapshot.entries, snapshot.syncRemovals, deltas)
-      : this.agents.commitSnapshot(snapshot.entries, deltas);
+    const agents =
+      snapshot.syncMode === "changes"
+        ? this.agents.commitChanges(snapshot.entries, snapshot.syncRemovals, deltas)
+        : this.agents.commitSnapshot(snapshot.entries, deltas);
+    useSessionStore.getState().setHasCurrentAgentDirectory(this.serverId, true);
+    return agents;
   }
 
   private persistAgentCursors(

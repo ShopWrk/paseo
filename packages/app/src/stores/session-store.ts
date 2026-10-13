@@ -386,6 +386,7 @@ export interface SessionState {
 
   // Hydration status
   hasHydratedAgents: boolean;
+  hasCurrentAgentDirectory: boolean;
   hasHydratedWorkspaces: boolean;
   hasWorkspaceDirectorySnapshot: boolean;
 
@@ -616,6 +617,7 @@ interface SessionStoreActions {
 
   // Hydration
   setHasHydratedAgents: (serverId: string, hydrated: boolean) => void;
+  setHasCurrentAgentDirectory: (serverId: string, current: boolean) => void;
   setHasHydratedWorkspaces: (serverId: string, hydrated: boolean) => void;
   setHasWorkspaceDirectorySnapshot: (serverId: string, available: boolean) => void;
 
@@ -640,6 +642,7 @@ function createInitialSessionState(
     viewedTimelineSync: null,
     serverInfo: null,
     hasHydratedAgents: false,
+    hasCurrentAgentDirectory: false,
     hasHydratedWorkspaces: false,
     hasWorkspaceDirectorySnapshot: false,
     isPlayingAudio: false,
@@ -1812,6 +1815,22 @@ export const useSessionStore = create<SessionStore>()(
       },
 
       // Hydration
+      setHasCurrentAgentDirectory: (serverId, current) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session || session.hasCurrentAgentDirectory === current) {
+            return prev;
+          }
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, hasCurrentAgentDirectory: current },
+            },
+          };
+        });
+      },
+
       setHasHydratedAgents: (serverId, hydrated) => {
         set((prev) => {
           const session = prev.sessions[serverId];

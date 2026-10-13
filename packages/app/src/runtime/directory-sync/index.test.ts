@@ -16,7 +16,8 @@ import {
   normalizeWorkspaceDescriptor,
   useSessionStore,
 } from "@/stores/session-store";
-import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { normalizeAgentSnapshot, projectAgentSnapshot } from "@/utils/agent-snapshots";
+import { resolveProjectPlacement } from "@/utils/project-placement";
 import { selectAgentNavTarget } from "@/utils/navigate-to-agent/resolve";
 import { selectWorkspaceDirectoryServerIds } from "@/stores/session-store-hooks/selectors";
 import { useWorkspaceLabels } from "@/workspace-labels";
@@ -268,12 +269,39 @@ afterEach(() => {
 });
 
 describe("DirectorySync session readiness", () => {
+  it("refreshes ownership for an open intent without sidebar or tab demand", async () => {
+    const serverId = "agent-intent-demand";
+    const { client, directory } = createDirectory(serverId);
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+    store.updateSessionServerInfo(serverId, { serverId, hostname: null, version: "test" });
+    const releaseAgents = client.holdAgentFetch();
+    const intentDemand = {};
+
+    directory.setDemand(intentDemand, true);
+    await expect.poll(() => client.fetchAgentsCalls).toBe(1);
+    expect(useSessionStore.getState().sessions[serverId].hasCurrentAgentDirectory).toBe(false);
+    releaseAgents({
+      requestId: "agents",
+      entries: [],
+      pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+    });
+    await directory.refreshDemand();
+    expect(useSessionStore.getState().sessions[serverId].hasCurrentAgentDirectory).toBe(true);
+
+    directory.setDemand(intentDemand, false);
+    expect(useSessionStore.getState().sessions[serverId].hasCurrentAgentDirectory).toBe(false);
+    expect(useSessionStore.getState().sessions[serverId].hasHydratedAgents).toBe(true);
+    directory.dispose();
+  });
+
   it("invalidates agent ownership when the online connection epoch changes", () => {
     const serverId = "agent-ownership-epoch";
     const { client, directory } = createDirectory(serverId);
     const store = useSessionStore.getState();
     store.initializeSession(serverId, client as unknown as DaemonClient, 1);
     store.setHasHydratedAgents(serverId, true);
+    store.setHasCurrentAgentDirectory(serverId, true);
 
     directory.connectionChanged({
       client: client as unknown as DaemonClient,
@@ -281,7 +309,8 @@ describe("DirectorySync session readiness", () => {
       source: { clientGeneration: 1, connectionEpoch: 2 },
     });
 
-    expect(useSessionStore.getState().sessions[serverId].hasHydratedAgents).toBe(false);
+    expect(useSessionStore.getState().sessions[serverId].hasHydratedAgents).toBe(true);
+    expect(useSessionStore.getState().sessions[serverId].hasCurrentAgentDirectory).toBe(false);
     directory.dispose();
   });
 
@@ -294,6 +323,7 @@ describe("DirectorySync session readiness", () => {
     const agent = { ...createAgent(serverId, "agent-1"), workspaceId: "workspace-old" };
     store.setAgents(serverId, new Map([[agent.id, agent]]));
     store.setHasHydratedAgents(serverId, true);
+    store.setHasCurrentAgentDirectory(serverId, true);
     const readTarget = () =>
       selectAgentNavTarget({
         session: useSessionStore.getState().sessions[serverId],
@@ -307,6 +337,7 @@ describe("DirectorySync session readiness", () => {
       source: { clientGeneration: 1, connectionEpoch: 1 },
     });
     expect(readTarget()).toEqual({ agentWorkspaceId: "workspace-old", isCurrent: false });
+    expect(useSessionStore.getState().sessions[serverId].hasHydratedAgents).toBe(true);
 
     directory.connectionChanged({
       client: client as unknown as DaemonClient,
@@ -317,14 +348,24 @@ describe("DirectorySync session readiness", () => {
     const refresh = directory.refreshAgents();
     await expect.poll(() => client.fetchAgentsCalls).toBe(1);
     expect(readTarget()).toEqual({ agentWorkspaceId: "workspace-old", isCurrent: false });
+    const currentAgent = { ...agent, workspaceId: "workspace-current" };
     releaseFetch({
       requestId: "agents",
-      entries: [],
+      entries: [
+        {
+          agent: projectAgentSnapshot(currentAgent),
+          project: resolveProjectPlacement({
+            projectPlacement: currentAgent.projectPlacement,
+            cwd: currentAgent.cwd,
+          }),
+        },
+      ],
       pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
     });
     await refresh;
     expect(useSessionStore.getState().sessions[serverId].hasHydratedAgents).toBe(true);
-    expect(readTarget()).toEqual({ agentWorkspaceId: undefined, isCurrent: false });
+    expect(useSessionStore.getState().sessions[serverId].hasCurrentAgentDirectory).toBe(true);
+    expect(readTarget()).toEqual({ agentWorkspaceId: "workspace-current", isCurrent: true });
     directory.dispose();
   });
 
@@ -455,6 +496,7 @@ describe("DirectorySync session readiness", () => {
     const agent = { ...createAgent(serverId, "agent-1"), workspaceId: "workspace-cached" };
     store.setAgentDetails(serverId, new Map([[agent.id, agent]]));
     store.setHasHydratedAgents(serverId, true);
+    store.setHasCurrentAgentDirectory(serverId, true);
 
     expect(
       selectAgentNavTarget({
